@@ -138,20 +138,28 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("XALQ Agent Enterprise")
         self.setMinimumSize(1000, 700)
+        self.processing_thread = None
+        self.local_version = "Unknown"
+        self.github_connected = False
         
         # Apply Theme
         self.setStyleSheet(DARK_THEME_QSS)
 
         # Core Components
-        self.worker_engine = WorkerEngine(progress_callback=self.update_log_from_worker)
-        self.processing_thread = None
-        self.updater = Updater(os.path.dirname(os.path.abspath(__file__)))
+        # base_dir is project root (parent of ui/)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.updater = Updater(project_root)
         
         self.setup_ui()
+        
+        # Initialize Worker AFTER UI to capture logs safely
+        self.worker_engine = WorkerEngine(progress_callback=self.update_log_from_worker)
+
         self.check_local_version()
         
-        # Async Version Check
+        # Async checks
         QTimer.singleShot(1000, self.check_remote_version)
+        QTimer.singleShot(1500, self.check_github_connectivity)
 
     def setup_ui(self):
         # Main Layout
@@ -173,6 +181,17 @@ class MainWindow(QMainWindow):
         # --- Header ---
         header_layout = QHBoxLayout()
         
+        # Logo
+        logo_label = QLabel()
+        logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates', 'img', '0_XALQ-0.png')
+        if os.path.exists(logo_path):
+            from PySide6.QtGui import QPixmap
+            pixmap = QPixmap(logo_path)
+            # Resize nicely
+            pixmap = pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_label.setPixmap(pixmap)
+            header_layout.addWidget(logo_label)
+        
         title_container = QVBoxLayout()
         title = QLabel("XALQ Agent")
         title.setObjectName("Title")
@@ -191,7 +210,6 @@ class MainWindow(QMainWindow):
 
         # Resource Monitor (Mini)
         self.resource_monitor = ResourceMonitor()
-        self.resource_monitor.setStyleSheet("background-color: transparent;")
         header_layout.addWidget(self.resource_monitor)
         
         content_layout.addLayout(header_layout)
@@ -285,22 +303,66 @@ class MainWindow(QMainWindow):
                 import json
                 v_data = json.load(f)
                 self.local_version = v_data.get('version', 'Unknown')
-                self.lbl_status.setText(f"XALQ v{self.local_version} | Status: Pronto")
+                self.update_status_footer("ready")
         except:
              self.local_version = "Unknown"
+             self.update_status_footer("error")
 
     def check_remote_version(self):
-        # Simple non-blocking update check logic simulated or via Updater
-        # For now, let's trust Updater's logic if implemented, or just check JSON
-        # Calling Updater synchronously here for simplicity as it's quick usually
         try:
             has_update, new_v = self.updater.check_for_updates()
             if has_update:
-                self.update_banner.setText(f"🚀 Nova versão disponível ({new_v})! Reinicie para aplicar.")
+                version_str = new_v.get('version', '?') if isinstance(new_v, dict) else str(new_v)
+                self.update_banner.setText(f"🚀 Nova versão disponível ({version_str})! Reinicie para aplicar.")
                 self.update_banner.show()
-                # Auto-pull logic is in Updater, we just notify
         except Exception as e:
             print(f"Update check failed: {e}")
+
+    def check_github_connectivity(self):
+        """Check if GitHub repo is reachable for prompt sync."""
+        import requests
+        try:
+            url = "https://raw.githubusercontent.com/andreocc/XALQ-Agent/main/version.json"
+            headers = {}
+            pat = self.worker_engine.github_pat
+            if pat:
+                headers["Authorization"] = f"token {pat}"
+            resp = requests.get(url, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                self.github_connected = True
+                self.update_status_footer("connected")
+                self.log("GitHub conectado com sucesso.", "success")
+            else:
+                self.github_connected = False
+                self.update_status_footer("offline")
+                self.log(f"GitHub retornou status {resp.status_code}.", "error")
+        except Exception as e:
+            self.github_connected = False
+            self.update_status_footer("offline")
+            self.log(f"GitHub offline: {e}", "error")
+
+    def update_status_footer(self, state):
+        """Update footer with colored status indicator."""
+        v = self.local_version
+        if state == "connected":
+            self.lbl_status.setText(f"🟢 Conectado: XALQ v{v}")
+            self.lbl_status.setStyleSheet("color: #a6e3a1; font-size: 12px; padding: 5px;")
+        elif state == "offline":
+            self.lbl_status.setText(f"🔴 Offline / Erro de Auth")
+            self.lbl_status.setStyleSheet("color: #f38ba8; font-size: 12px; padding: 5px;")
+        elif state == "processing":
+            model = self.combo_model.currentText()
+            self.lbl_status.setText(f"🧠 Processando via: {model}")
+            self.lbl_status.setStyleSheet("color: #89b4fa; font-size: 12px; padding: 5px;")
+        elif state == "ready":
+            self.lbl_status.setText(f"XALQ v{v} | Status: Pronto")
+            self.lbl_status.setStyleSheet("color: #6c7086; font-size: 12px; padding: 5px;")
+        elif state == "done":
+            self.lbl_status.setText(f"🟢 XALQ v{v} | Status: Concluído")
+            self.lbl_status.setStyleSheet("color: #a6e3a1; font-size: 12px; padding: 5px;")
+        elif state == "error":
+            self.lbl_status.setText(f"🔴 XALQ v{v} | Status: Erro")
+            self.lbl_status.setStyleSheet("color: #f38ba8; font-size: 12px; padding: 5px;")
 
     def refresh_models(self):
         try:
@@ -345,11 +407,12 @@ class MainWindow(QMainWindow):
 
         self.btn_process.setEnabled(False)
         self.progress_bar.setRange(0, 0) # Indeterminate pulsating
-        self.lbl_status.setText(f"🧠 Processando via: {model}...")
+        self.update_status_footer("processing")
 
         # Worker Thread
         self.processing_thread = QThread()
-        self.worker = ProcessingWorker(self.worker_engine, file_path, model, prompt_type_override=prompt_type)
+        # ProcessingWorker(file_path, model_override, rows_to_process, prompt_type_override, api_key)
+        self.worker = ProcessingWorker(file_path, model, None, prompt_type_override=prompt_type)
         self.worker.moveToThread(self.processing_thread)
 
         self.processing_thread.started.connect(self.worker.run)
@@ -368,7 +431,7 @@ class MainWindow(QMainWindow):
         self.btn_process.setEnabled(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
-        self.lbl_status.setText(f"XALQ v{self.local_version} | Status: Concluído")
+        self.update_status_footer("done")
         self.log("Processamento finalizado com sucesso.", "success")
         
         # Open output folder
@@ -377,17 +440,19 @@ class MainWindow(QMainWindow):
         except:
              pass
 
-        self.processing_thread.quit()
-        self.processing_thread.wait()
+        if self.processing_thread:
+            self.processing_thread.quit()
+            self.processing_thread.wait()
 
     def on_processing_error(self, err_msg):
         self.btn_process.setEnabled(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.lbl_status.setText(f"XALQ v{self.local_version} | Status: Erro")
+        self.update_status_footer("error")
         self.log(f"Erro: {err_msg}", "error")
-        self.processing_thread.quit()
-        self.processing_thread.wait()
+        if self.processing_thread:
+            self.processing_thread.quit()
+            self.processing_thread.wait()
 
     def update_log_from_worker(self, msg):
         # Detect type for coloring
@@ -410,6 +475,19 @@ class MainWindow(QMainWindow):
         # Auto scroll
         sb = self.log_area.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def closeEvent(self, event):
+        """Properly stop threads before closing."""
+        # Stop ResourceMonitor thread
+        if hasattr(self, 'resource_monitor'):
+            self.resource_monitor.close()
+        
+        # Stop processing thread
+        if self.processing_thread and self.processing_thread.isRunning():
+            self.processing_thread.quit()
+            self.processing_thread.wait(2000)
+        
+        super().closeEvent(event)
 
 if __name__ == "__main__":
     from PySide6.QtWidgets import QApplication

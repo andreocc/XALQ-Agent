@@ -221,16 +221,21 @@ class WorkerEngine:
                 generation_config = genai.types.GenerationConfig(
                     temperature=config.get('temperature', temp),
                     top_p=0.9,
-                    max_output_tokens=8192,
+                    max_output_tokens=16384,
                 )
                 
-                response = model.generate_content(prompt_content, generation_config=generation_config)
+                self.log_and_progress(f"⏳ Gerando análise com {model_name}... (pode levar 2-5 min)", "info")
+                response = model.generate_content(
+                    prompt_content,
+                    generation_config=generation_config,
+                )
                 
                 if not response.parts:
                     if response.prompt_feedback:
                          self.log_and_progress(f"Safety Block ({model_name}): {response.prompt_feedback}", "error")
-                    return None # Stop on safety block usually, or continue? usually stop.
+                    return None
 
+                self.log_and_progress(f"✅ Resposta recebida de {model_name}.", "info")
                 return response.text
                 
             except Exception as e:
@@ -306,7 +311,7 @@ class WorkerEngine:
         s = re.sub(r'[^\w\-\.]', '_', text)
         return s.strip('_')
 
-    def generate_word_report(self, parsed_data, agent_type, model_name, timestamp, prefix):
+    def generate_word_report(self, parsed_data, agent_type, model_name, timestamp, prefix, row_data=None):
         template_path = os.path.join(self.templates_dir, 'template_xalq.docx')
         if not os.path.exists(template_path):
             self.log_and_progress(f"Template not found: {template_path}", "error")
@@ -314,7 +319,38 @@ class WorkerEngine:
             
         try:
             doc = Document(template_path)
+
+            # Extract CSV fields for header placeholders
+            nome_empresa = prefix  # fallback
+            carimbo = timestamp
+            if row_data is not None:
+                # Company name: tiered search (most specific first)
+                name_priorities = [
+                    ['nome da empresa'],
+                    ['razão social', 'razao social'],
+                    ['cliente', 'company', 'organization'],
+                ]
+                for tier in name_priorities:
+                    found = False
+                    for col_name, val in row_data.items():
+                        col_lower = str(col_name).lower().strip()
+                        if any(col_lower == k or col_lower.startswith(k) for k in tier):
+                            nome_empresa = str(val).strip()
+                            found = True
+                            break
+                    if found:
+                        break
+
+                # Timestamp: first column matching date keywords
+                for col_name, val in row_data.items():
+                    col_lower = str(col_name).lower().strip()
+                    if any(k in col_lower for k in ['carimbo', 'data/hora', 'timestamp']):
+                        carimbo = str(val)
+                        break
+
             replacements = {
+                '{{NOME DA EMPRESA}}': nome_empresa,
+                '{{CARIMBO DE DATA/HORA}}': carimbo,
                 '{{RESUMO_EXECUTIVO}}': parsed_data.get('RESUMO_EXECUTIVO', ''),
                 '{{DIAGNOSTICO}}': parsed_data.get('DIAGNOSTICO', ''),
                 '{{LACUNAS}}': parsed_data.get('LACUNAS', ''),
@@ -475,7 +511,7 @@ class WorkerEngine:
             # 4. Parse & Save
             parsed = self.parse_response(response)
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            rpt = self.generate_word_report(parsed, p_type, config['model'], timestamp, prefix)
+            rpt = self.generate_word_report(parsed, p_type, config['model'], timestamp, prefix, row_data=row)
             
             if rpt:
                 generated_files.append(rpt)

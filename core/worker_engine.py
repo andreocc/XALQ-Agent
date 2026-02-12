@@ -163,16 +163,17 @@ class WorkerEngine:
              return None
 
         # Models to try in order of preference if the selected one fails
-        selected_model = config.get('model', 'gemini-1.5-flash')
+        selected_model = config.get('model', 'models/gemini-2.5-flash')
         fallback_models = [
-            selected_model, 
+            selected_model,
+            'models/gemini-2.5-flash',
+            'models/gemini-2.5-pro',
+            'models/gemini-2.0-flash',
+            'models/gemini-flash-latest',
+            'models/gemini-pro-latest',
+            # Legacy/Standard (just in case)
             'gemini-1.5-flash', 
-            'gemini-1.5-pro',
-            'gemini-1.0-pro', 
-            'gemini-pro',
-            'models/gemini-1.5-flash',
-            'models/gemini-1.5-pro',
-            'models/gemini-1.0-pro'
+            'gemini-1.5-pro'
         ]
         # Remove duplicates while preserving order
         models_to_try = list(dict.fromkeys(fallback_models))
@@ -400,18 +401,30 @@ class WorkerEngine:
 
     def get_available_models(self):
         """Return available Gemini models, dynamically checking API if possible."""
-        default_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"]
+        default_models = ["models/gemini-2.5-flash", "models/gemini-2.5-pro", "models/gemini-flash-latest"]
         try:
             if self.api_key:
                 # Try to fetch real list
                 real_models = []
+                count = 0
                 for m in genai.list_models():
                     if 'generateContent' in m.supported_generation_methods:
-                        # strip 'models/' prefix for display if desired, or keep it
-                        name = m.name.replace('models/', '') 
+                        name = m.name
+                        # Optimization: Filter out likely unstable/experimental models to avoid API rate limits
+                        lower_name = name.lower()
+                        if any(x in lower_name for x in ['preview', 'exp', 'vision', 'image', 'tts', 'computer', 'robotics', 'nano']):
+                            continue
+                        
+                        # strip 'models/' prefix for display if desired, but for this specific "future" API it seems stricter
+                        # We will keep the full name to be safe, or just the short name if it works. 
+                        # Based on logs, 'models/' prefix is safer.
                         real_models.append(name)
+                        count += 1
+                        
                 if real_models:
-                    return list(set(real_models + default_models)) # Merge
+                    # Sort to put shorter/cleaner names first
+                    real_models.sort(key=len)
+                    return list(dict.fromkeys(real_models + default_models)) 
         except:
             pass
             
@@ -439,7 +452,7 @@ class WorkerEngine:
         
         # Config setup
         config = {
-            'model': model_override or 'gemini-1.5-flash',
+            'model': model_override or 'models/gemini-2.5-flash',
             'temperature': 0.2,
             'top_p': 0.9
         }

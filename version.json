@@ -1,15 +1,15 @@
 {
-  "version": "1.1.9",
+  "version": "1.1.10",
   "release_date": "2026-02-12",
   "min_executable_version": "1.0.0",
   "changelog": [
-    "Expansão do Fallback de Modelos: Suporte a prefixos 'models/' e detecção dinâmica.",
-    "Mudança de modelo padrão para 'gemini-1.5-flash' (mais rápido/estável).",
-    "Correção na autenticação e tratamento de erro 404 de modelos."
+    "Suporte a novos modelos do Google (Gemini 2.5 Flash/Pro, 2.0 etc).",
+    "Filtro inteligente de modelos instáveis/preview para evitar Rate Limits (Erro 429).",
+    "Correção de erro 404 em chaves de API com acesso a novos tiers."
   ],
   "assets": {
     "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
-    "prompt_manifest_v": "20260212.10"
+    "prompt_manifest_v": "20260212.11"
   },
   "critical_update": true
 }

@@ -1,15 +1,15 @@
 {
-  "version": "1.1.7",
+  "version": "1.1.8",
   "release_date": "2026-02-12",
   "min_executable_version": "1.0.0",
   "changelog": [
+    "Sistema de Fallback de Modelos: Tenta gemini-1.5-flash/gemini-pro se o principal falhar.",
     "Correção na autenticação: uso de chave padrão se nenhuma for configurada.",
-    "HOTFIX: Correção crítica de erro 'AttributeError: read_prompt_content'.",
-    "Renomeação dos arquivos de prompt para compatibilidade."
+    "HOTFIX: Correção crítica de erro 'AttributeError: read_prompt_content'."
   ],
   "assets": {
     "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
-    "prompt_manifest_v": "20260212.08"
+    "prompt_manifest_v": "20260212.09"
   },
   "critical_update": true
 }

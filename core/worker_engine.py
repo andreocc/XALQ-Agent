@@ -162,31 +162,46 @@ class WorkerEngine:
              self.log_and_progress("Tentativa de chamar Gemini sem API Key configurada.", "error")
              return None
 
-        model_name = config.get('model', 'gemini-1.5-pro')
+        # Models to try in order of preference if the selected one fails
+        selected_model = config.get('model', 'gemini-1.5-pro')
+        fallback_models = [selected_model, 'gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-pro']
+        # Remove duplicates while preserving order
+        models_to_try = list(dict.fromkeys(fallback_models))
         
-        try:
-            model = genai.GenerativeModel(model_name)
-            generation_config = genai.types.GenerationConfig(
-                temperature=config.get('temperature', 0.2),
-                top_p=config.get('top_p', 0.9),
-                max_output_tokens=8192,
-            )
-            
-            self.log_and_progress(f"Enviando request para Gemini ({model_name})...", "debug")
-            response = model.generate_content(prompt_content, generation_config=generation_config)
-            
-            # Check for safety blocks or empty responses
-            if not response.parts:
-                if response.prompt_feedback:
-                     self.log_and_progress(f"Gemini bloqueou o prompt: {response.prompt_feedback}", "error")
-                else:
-                     self.log_and_progress("Resposta do Gemini vazia (sem parts). Verifique safety filters.", "error")
-                return None
+        last_error = None
+        
+        for model_name in models_to_try:
+            try:
+                self.log_and_progress(f"Tentando modelo: {model_name}...", "debug")
+                model = genai.GenerativeModel(model_name)
+                generation_config = genai.types.GenerationConfig(
+                    temperature=config.get('temperature', 0.2),
+                    top_p=config.get('top_p', 0.9),
+                    max_output_tokens=8192,
+                )
+                
+                response = model.generate_content(prompt_content, generation_config=generation_config)
+                
+                # Check for safety blocks or empty responses
+                if not response.parts:
+                    if response.prompt_feedback:
+                         self.log_and_progress(f"Gemini bloqueou o prompt ({model_name}): {response.prompt_feedback}", "error")
+                    else:
+                         self.log_and_progress(f"Resposta vazia de {model_name}. Verifique safety filters.", "error")
+                    return None
 
-            return response.text
-        except Exception as e:
-            self.log_and_progress(f"Gemini API Error: {e}", "error")
-            return None
+                return response.text
+                
+            except Exception as e:
+                error_str = str(e)
+                self.log_and_progress(f"Erro com {model_name}: {error_str}", "debug")
+                last_error = e
+                # If it's a 404 or "not found", continue to next model. 
+                # If it's an auth error, stopping might be better, but let's try others just in case name mapping is weird.
+                continue
+                
+        self.log_and_progress(f"Falha em todos os modelos. Último erro: {last_error}", "error")
+        return None
 
     def parse_ollama_response(self, ai_response):
         """
@@ -377,7 +392,7 @@ class WorkerEngine:
     def get_available_models(self):
         """Return available Gemini models."""
         # Hardcoded list for now, or could fetch from genai.list_models() if key is valid
-        return ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"]
+        return ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro", "gemini-pro"]
         
     def get_prompts_list(self):
         """Return list of available prompt files."""

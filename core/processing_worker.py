@@ -14,12 +14,13 @@ class ProcessingWorker(QObject):
 
     files_generated = Signal(list)
 
-    def __init__(self, file_path, model_override=None, rows_to_process=None, prompt_type_override=None):
+    def __init__(self, file_path, model_override=None, rows_to_process=None, prompt_type_override=None, api_key=None):
         super().__init__()
         self.file_path = file_path
         self.model_override = model_override
         self.rows_to_process = rows_to_process
         self.prompt_type_override = prompt_type_override
+        self.api_key = api_key
         self._is_running = True
 
     def run(self):
@@ -41,7 +42,7 @@ class ProcessingWorker(QObject):
                 else:
                     self.progress.emit(message)
 
-            engine = WorkerEngine(progress_callback=bridge_callback)
+            engine = WorkerEngine(progress_callback=bridge_callback, api_key=self.api_key)
             # Returns list of generated files
             generated_files = engine.process_file(
                 self.file_path, 

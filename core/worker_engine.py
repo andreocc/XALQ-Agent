@@ -12,7 +12,7 @@ import google.generativeai as genai
 from core.updater import Updater
 
 class WorkerEngine:
-    def __init__(self, base_dir=None, progress_callback=None):
+    def __init__(self, base_dir=None, progress_callback=None, api_key=None):
         self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
         
         # Adjust base_dir if it's inside 'core'
@@ -25,7 +25,6 @@ class WorkerEngine:
         self.templates_dir = os.path.join(self.base_dir, 'templates')
         self.error_dir = os.path.join(self.base_dir, 'error')
         self.log_dir = os.path.join(self.base_dir, 'logs')
-        # self.models_dir = os.path.join(self.base_dir, 'models') # Deprecated for Gemini
         
         self.progress_callback = progress_callback
         
@@ -35,6 +34,8 @@ class WorkerEngine:
         self.settings = QSettings("XALQ", "XALQ Agent")
         self.updater = Updater(self.base_dir)
         
+        # Use passed key or load from settings
+        self.api_key = api_key or self.settings.value("gemini_api_key", "")
         self._configure_gemini()
 
     def _ensure_dirs(self):
@@ -53,9 +54,9 @@ class WorkerEngine:
         return logger
 
     def _configure_gemini(self):
-        api_key = self.settings.value("gemini_api_key", "")
-        if api_key:
-            genai.configure(api_key=api_key)
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
+            self.log_and_progress("Gemini configurado com sucesso.", "debug")
         else:
             self.log_and_progress("Gemini API Key não configurada! Adicione nas configurações.", "error")
 
@@ -118,6 +119,10 @@ class WorkerEngine:
         return self.call_gemini_api(prompt_content, config)
 
     def call_gemini_api(self, prompt_content, config):
+        if not self.api_key:
+             self.log_and_progress("Tentativa de chamar Gemini sem API Key configurada.", "error")
+             return None
+
         model_name = config.get('model', 'gemini-1.5-pro')
         
         try:
@@ -168,14 +173,33 @@ class WorkerEngine:
                 return None, []
                 
             # Create a list of "Index: CompanyName" for combo box
-            # Assuming 'Nome da Empresa' exists, otherwise use Index
-            items = []
-            col_name = 'Nome da Empresa'
-            if col_name not in df.columns:
-                col_name = df.columns[0] # Use first col as proxy
+            # Improved heuristic for Company Name
+            company_col = None
+            candidates = ['nome da empresa', 'empresa', 'company', 'name', 'cliente', 'organization', 'razão social', 'razao social']
             
+            # 1. Search for exact/partial match
+            for col in df.columns:
+                if any(c in str(col).lower() for c in candidates):
+                    company_col = col
+                    break
+            
+            # 2. Fallback: First column that is NOT a timestamp
+            if not company_col:
+                for col in df.columns:
+                    col_str = str(col).lower()
+                    # Check for date keywords
+                    if any(x in col_str for x in ['data', 'date', 'time', 'carimbo', 'timestamp', 'hora']):
+                        continue
+                    company_col = col
+                    break
+            
+            # 3. Final Fallback
+            if not company_col:
+                company_col = df.columns[0]
+            
+            items = []
             for idx, row in df.iterrows():
-                val = str(row[col_name])
+                val = str(row[company_col])
                 items.append(f"{idx}: {val}")
                 
             return df, items

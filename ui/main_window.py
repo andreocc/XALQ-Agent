@@ -369,6 +369,10 @@ class MainWindow(QMainWindow):
         self.add_timeline_event(f"📊 Tipo de análise: {self.prompt_type_combo.currentText()}")
 
         self.generated_files_cache = []
+        
+        # Retrieve API Key
+        settings = QSettings("XALQ", "XALQ Agent")
+        api_key = settings.value("gemini_api_key", "")
 
         # Setup Thread and Worker
         self.thread = QThread()
@@ -376,7 +380,8 @@ class MainWindow(QMainWindow):
             file_path, 
             model_override=selected_model,
             rows_to_process=rows_to_process,
-            prompt_type_override=prompt_type
+            prompt_type_override=prompt_type,
+            api_key=api_key
         )
         self.worker.moveToThread(self.thread)
 

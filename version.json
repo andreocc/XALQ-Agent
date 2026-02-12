@@ -1,0 +1,15 @@
+{
+  "version": "1.1.0",
+  "release_date": "2026-02-12",
+  "min_executable_version": "1.0.0",
+  "changelog": [
+    "Migração do motor Ollama para Google Gemini API.",
+    "Sincronização dinâmica de prompts via GitHub Privado.",
+    "Melhoria na segurança das API Keys no Settings Dialog."
+  ],
+  "assets": {
+    "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
+    "prompt_manifest_v": "20260212.01"
+  },
+  "critical_update": false
+}

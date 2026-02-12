@@ -1,15 +1,16 @@
 {
-  "version": "1.1.10",
+  "version": "1.2.0",
   "release_date": "2026-02-12",
   "min_executable_version": "1.0.0",
   "changelog": [
-    "Suporte a novos modelos do Google (Gemini 2.5 Flash/Pro, 2.0 etc).",
-    "Filtro inteligente de modelos instáveis/preview para evitar Rate Limits (Erro 429).",
-    "Correção de erro 404 em chaves de API com acesso a novos tiers."
+    "REFACTOR: Novo Motor 'Cloud-Only' (Google Gemini 1.5/2.x).",
+    "UI PREMIUM: Tema Dark Mode Corporativo e nova interface limpa.",
+    "GitHub Sync: Download automático de prompts com suporte a PAT Privado.",
+    "Estratégia de IA: Priorização de Gemini 1.5 Pro (Precisão) com Fallback Flash."
   ],
   "assets": {
     "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
-    "prompt_manifest_v": "20260212.11"
+    "prompt_manifest_v": "20260212.12"
   },
   "critical_update": true
 }

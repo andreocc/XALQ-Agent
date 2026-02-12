@@ -1,14 +1,14 @@
 import os
-import re
 import datetime
 import logging
 import json
 import requests
 import re
 import platform
+import google.generativeai as genai
 from docx import Document
 from PySide6.QtCore import QSettings
-import google.generativeai as genai
+from functools import lru_cache
 from core.updater import Updater
 
 class WorkerEngine:
@@ -34,6 +34,10 @@ class WorkerEngine:
         self.settings = QSettings("XALQ", "XALQ Agent")
         self.updater = Updater(self.base_dir)
         
+        # GitHub Config
+        self.repo_url = "https://raw.githubusercontent.com/andreocc/XALQ-Agent/main/prompts/"
+        self.github_pat = self.settings.value("github_pat", "")
+
         # Use passed key or load from settings
         # Fallback to shared default if not configured (matches SettingsDialog default)
         DEFAULT_KEY = "AIzaSyA1R5VwkRUrdiSd4KQMEsCdEKQZ-blzWxk"
@@ -56,11 +60,14 @@ class WorkerEngine:
     def _setup_logging(self):
         logger = logging.getLogger("WorkerEngine")
         logger.setLevel(logging.INFO)
-        if not logger.handlers:
-            fh = logging.FileHandler(os.path.join(self.log_dir, 'worker.log'), encoding='utf-8')
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            fh.setFormatter(formatter)
-            logger.addHandler(fh)
+        # Clear existing handlers to avoid duplication if re-instantiated
+        if logger.handlers:
+            logger.handlers.clear()
+            
+        fh = logging.FileHandler(os.path.join(self.log_dir, 'worker.log'), encoding='utf-8')
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
         return logger
 
     def _configure_gemini(self):
@@ -68,7 +75,7 @@ class WorkerEngine:
             genai.configure(api_key=self.api_key)
             self.log_and_progress("Gemini configurado com sucesso.", "debug")
         else:
-            self.log_and_progress("Gemini API Key não configurada! Adicione nas configurações.", "error")
+            self.log_and_progress("Gemini API Key não configurada!", "error")
 
     def log_and_progress(self, message, status_type="info"):
         if status_type == "info":
@@ -81,68 +88,35 @@ class WorkerEngine:
         if self.progress_callback:
             self.progress_callback(message)
 
-    def load_agent_prompt(self, agent_type):
-        """
-        Loads prompt content with fuzzy filename matching to handle
-        encoding differences (accents, dashes, case).
-        """
-        import unicodedata
-
-        def normalize(text):
-            # NFKD decomposition, lowercase, remove non-ascii for robust comparison
-            text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
-            return text.lower().replace(" ", "").replace("-", "").replace("_", "")
-
-        target_normalized = normalize(agent_type)
-
-        # 1. List local files and try to find a match
+    @lru_cache(maxsize=32)
+    def fetch_github_prompt(self, filename):
+        """Fetches prompt from GitHub with caching and PAT authentication."""
         try:
-            local_files = [f for f in os.listdir(self.prompts_dir) if f.endswith('.md')]
-            for fname in local_files:
-                # Check 1: Exact match
-                if fname == agent_type or fname == f"{agent_type}.md":
-                    return self.read_prompt_content(fname)
-                
-                # Check 2: Fuzzy match
-                fname_normalized = normalize(fname.replace(".md", ""))
-                if fname_normalized == target_normalized:
-                    return self.read_prompt_content(fname)
-                    
-                # Check 3: Checking if target is a substring of filename (e.g. "revenue" in "...REVENUE...")
-                if target_normalized in fname_normalized:
-                     # Heuristic: if strict match fails, maybe the short name is part of the long filename
-                     # But be careful not to match "revenue" to "revenue_operations" incorrectly if both exist
-                     # For now, let's trust the mapping below if this fails.
-                     pass
-
-        except Exception as e:
-            self.log_and_progress(f"Error listing local prompts: {e}", "error")
-
-        # 2. Fallback to mapped types (legacy/convenience) if no local file matched
-        agent_type_mapping = {
-            'b2b (vende para outras empresas)': 'revenue',
-            'revenue': '1_diagnostico_revenue_decision_core.md',
-            'operations': '1_diagnostico_digital_operations_core.md',
-        }
-        
-        mapped_name = agent_type_mapping.get(agent_type, agent_type)
-        if not mapped_name.endswith('.md'):
-             mapped_name += '.md'
-
-        # Try loading the mapped name locally (again, with fuzzy check if needed, but usually exact)
-        full_path = os.path.join(self.prompts_dir, mapped_name)
-        if os.path.exists(full_path):
-             return self.read_prompt_content(mapped_name)
-
-        # 3. If not found locally, try GitHub
-        self.log_and_progress(f"Prompt {mapped_name} não encontrado localmente. Buscando no GitHub...", "debug")
-        content = self.updater.get_github_prompt(mapped_name)
-        if content:
-            self.save_prompt_content(mapped_name, content)
-            return content
+            url = f"{self.repo_url}{filename}"
+            headers = {}
+            if self.github_pat:
+                headers["Authorization"] = f"token {self.github_pat}"
             
-        self.log_and_progress(f"Prompt not found for type: {agent_type} (Local or GitHub)", "error")
-        return None
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                self.log_and_progress(f"Prompt baixado do GitHub: {filename}", "debug")
+                return response.text
+            else:
+                self.log_and_progress(f"Falha ao baixar prompt do GitHub ({response.status_code}): {filename}", "error")
+                return None
+        except Exception as e:
+            self.log_and_progress(f"Erro de conexão GitHub: {e}", "error")
+            return None
+
+    def save_prompt_content(self, filename, content):
+        try:
+            path = os.path.join(self.prompts_dir, filename)
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return True
+        except Exception as e:
+            self.logger.error(f"Erro ao salvar prompt {filename}: {e}")
+            return False
 
     def read_prompt_content(self, filename):
         try:
@@ -153,30 +127,91 @@ class WorkerEngine:
             self.log_and_progress(f"Error reading prompt file {filename}: {e}", "error")
             return None
 
+    def load_agent_prompt(self, agent_type):
+        """
+        Loads prompt content. Prioritizes local file, falls back to GitHub.
+        Normalizes filenames for robustness.
+        """
+        import unicodedata
+
+        def normalize(text):
+            text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
+            return text.lower().replace(" ", "").replace("-", "").replace("_", "")
+
+        target_normalized = normalize(agent_type)
+        
+        # 1. Try Local
+        try:
+            local_files = [f for f in os.listdir(self.prompts_dir) if f.endswith('.md')]
+            for fname in local_files:
+                # Exact
+                if fname == agent_type or fname == f"{agent_type}.md":
+                    return self.read_prompt_content(fname)
+                # Fuzzy
+                fname_normalized = normalize(fname.replace(".md", ""))
+                if fname_normalized == target_normalized:
+                    return self.read_prompt_content(fname)
+        except Exception as e:
+            self.log_and_progress(f"Error listing local prompts: {e}", "error")
+
+        # 2. Mapped fallback
+        agent_type_mapping = {
+            'b2b (vende para outras empresas)': 'revenue',
+            'revenue': '1_diagnostico_revenue_decision_core.md',
+            'operations': '1_diagnostico_digital_operations_core.md',
+        }
+        
+        mapped_name = agent_type_mapping.get(agent_type, agent_type)
+        if not mapped_name.endswith('.md'):
+             mapped_name += '.md'
+
+        # Check local mapped
+        full_path = os.path.join(self.prompts_dir, mapped_name)
+        if os.path.exists(full_path):
+             return self.read_prompt_content(mapped_name)
+
+        # 3. GitHub Fetch
+        self.log_and_progress(f"Prompt {mapped_name} não encontrado localmente. Buscando no GitHub...", "debug")
+        content = self.fetch_github_prompt(mapped_name)
+        if content:
+            self.save_prompt_content(mapped_name, content)
+            return content
+            
+        self.log_and_progress(f"Prompt not found: {mapped_name}", "error")
+        return None
+
     def call_ai_api(self, prompt_content, config):
-        """Routes to Gemini API."""
-        return self.call_gemini_api(prompt_content, config)
-
-    def call_gemini_api(self, prompt_content, config):
-        if not self.api_key:
-             self.log_and_progress("Tentativa de chamar Gemini sem API Key configurada.", "error")
-             return None
-
-        # Models to try in order of preference if the selected one fails
-        selected_model = config.get('model', 'models/gemini-2.5-flash')
-        fallback_models = [
-            selected_model,
-            'models/gemini-2.5-flash',
-            'models/gemini-2.5-pro',
+        # Strategy:
+        # 1. Primary: gemini-1.5-pro (Temp 0.1) -> Depth & Reasoning
+        # 2. Fallback: gemini-2.0-flash (Temp 0.2) -> Speed & Recovery
+        
+        user_model = config.get('model', 'gemini-1.5-pro')
+        
+        # Construct fallback chain
+        # If user selected Pro, keep Pro first. If user selected Flash, respect that?
+        # User Instruction: "O padrão deveria ser o modelo pro".
+        
+        # We will try the user selected model first (which defaults to Pro), then fallbacks.
+        
+        candidate_models = [
+            user_model,
+            'models/' + user_model if not user_model.startswith('models/') else user_model,
+            
+            # Explicit Primary
+            'models/gemini-1.5-pro',
+            'gemini-1.5-pro',
+            
+            # Explicit Fallback
             'models/gemini-2.0-flash',
-            'models/gemini-flash-latest',
-            'models/gemini-pro-latest',
-            # Legacy/Standard (just in case)
-            'gemini-1.5-flash', 
-            'gemini-1.5-pro'
+            'gemini-2.0-flash',
+            
+            # Legacy/Safety
+            'models/gemini-1.5-flash',
+            'gemini-flash-latest'
         ]
-        # Remove duplicates while preserving order
-        models_to_try = list(dict.fromkeys(fallback_models))
+        
+        # Deduplicate preserving order
+        models_to_try = list(dict.fromkeys(candidate_models))
         
         last_error = None
         
@@ -184,103 +219,136 @@ class WorkerEngine:
             try:
                 self.log_and_progress(f"Tentando modelo: {model_name}...", "debug")
                 model = genai.GenerativeModel(model_name)
+                
+                # Temperature Strategy: Pro = 0.1 (Precision), Flash = 0.2 (Creative/Fast)
+                is_pro = "pro" in model_name.lower()
+                temp = 0.1 if is_pro else 0.2
+                
                 generation_config = genai.types.GenerationConfig(
-                    temperature=config.get('temperature', 0.2),
-                    top_p=config.get('top_p', 0.9),
+                    temperature=config.get('temperature', temp),
+                    top_p=0.9,
                     max_output_tokens=8192,
                 )
                 
                 response = model.generate_content(prompt_content, generation_config=generation_config)
                 
-                # Check for safety blocks or empty responses
                 if not response.parts:
                     if response.prompt_feedback:
-                         self.log_and_progress(f"Gemini bloqueou o prompt ({model_name}): {response.prompt_feedback}", "error")
-                    else:
-                         self.log_and_progress(f"Resposta vazia de {model_name}. Verifique safety filters.", "error")
-                    return None
+                         self.log_and_progress(f"Safety Block ({model_name}): {response.prompt_feedback}", "error")
+                    return None # Stop on safety block usually, or continue? usually stop.
 
                 return response.text
                 
             except Exception as e:
-                error_str = str(e)
-                self.log_and_progress(f"Erro com {model_name}: {error_str}", "debug")
+                # Log usage limits or 404s
+                self.log_and_progress(f"Erro em {model_name}: {e}", "debug")
                 last_error = e
-                # If it's a 404 or "not found", continue to next model. 
-                # If it's an auth error, stopping might be better, but let's try others just in case name mapping is weird.
                 continue
-                
-        self.log_and_progress(f"Falha em todos os modelos. Último erro: {last_error}", "error")
+        
+        self.log_and_progress(f"FALHA FATAL: Nenhum modelo disponível. Erro: {last_error}", "error")
         return None
 
-    def parse_ollama_response(self, ai_response):
-        """
-        Parses response looking for [SECTION]...[/SECTION] tags.
-        Falls back to simpler parsing if strict tags are missing.
-        """
+    def parse_response(self, ai_response):
         parsed_data = {}
         sections = ["RESUMO_EXECUTIVO", "DIAGNOSTICO", "LACUNAS", "CLASSIFICACAO", "OBSERVACOES_XALQ"]
         
-        # 1. Try strict tagging [SECTION]...[/SECTION]
+        # 1. Strict
         for section in sections:
             pattern = fr"\[{section}\](.*?)\[/{section}\]"
             match = re.search(pattern, ai_response, re.DOTALL | re.IGNORECASE)
-            if match:
-                parsed_data[section] = match.group(1).strip()
-            else:
-                parsed_data[section] = ""
-
-        # 2. Validation: If most sections are empty, try fallback parsing
-        filled_sections = sum(1 for v in parsed_data.values() if v)
-        if filled_sections < 2:
-            self.log_and_progress("Tags estritas não encontradas ou incompletas. Tentando parsing flexível...", "debug")
-            # Fallback: Extract between headers
-            # Assuming headers might be like "Resumo Executivo:" or "## Resumo Executivo"
-            # We map clean names to section keys
+            parsed_data[section] = match.group(1).strip() if match else ""
             
-            # Create a clean version of the response for searching
-            clean_response = ai_response
+        # 2. Flexible Fallback
+        if sum(1 for v in parsed_data.values() if v) < 2:
+            self.log_and_progress("Parsing estrito falhou. Usando modo flexível...", "debug")
+            clean_response = ai_response.replace("*", "").replace("#", "")
+            current_section = None
             
-            # Map simplified headers to keys
-            header_map = {
+            # Header mapping
+            map_headers = {
                 "RESUMO EXECUTIVO": "RESUMO_EXECUTIVO",
                 "DIAGNOSTICO": "DIAGNOSTICO",
-                "DIAGNÓSTICO": "DIAGNOSTICO",
-                "LACUNAS": "LACUNAS",
-                "CLASSIFICAÇÃO": "CLASSIFICACAO",
+                "LACUNAS": "LACUNAS", 
                 "CLASSIFICACAO": "CLASSIFICACAO",
-                "OBSERVAÇÕES": "OBSERVACOES_XALQ",
                 "OBSERVACOES": "OBSERVACOES_XALQ"
             }
             
-            current_section = None
             lines = clean_response.split('\n')
-            
-            # Temporary buffer for manual extraction
-            temp_data = {k: [] for k in sections}
-            
             for line in lines:
-                clean_line = line.strip().upper().replace("*", "").replace("#", "").replace(":", "")
+                upper_line = line.strip().upper().replace(":", "")
+                # Check for header
+                found = False
+                for k, v in map_headers.items():
+                    if k in upper_line and len(upper_line) < 40: # Short header line
+                        current_section = v
+                        found = True
+                        break
                 
-                # Check if this line is a header
-                found_header = None
-                for header, key in header_map.items():
-                   if clean_line == header:
-                       found_header = key
-                       break
+                if found: continue
                 
-                if found_header:
-                    current_section = found_header
-                elif current_section:
-                    temp_data[current_section].append(line)
-            
-            # Join collected lines
-            for key, lines in temp_data.items():
-                if lines:
-                    parsed_data[key] = "\n".join(lines).strip()
-                    
+                if current_section:
+                    parsed_data[current_section] = parsed_data.get(current_section, "") + line + "\n"
+
         return parsed_data
 
+    # Helper for filename
+    def sanitize_filename(self, text):
+        if not isinstance(text, str): return "unknown"
+        s = re.sub(r'[^\w\-\.]', '_', text)
+        return s.strip('_')
+
+    def generate_word_report(self, parsed_data, agent_type, model_name, timestamp, prefix):
+        template_path = os.path.join(self.templates_dir, 'template_xalq.docx')
+        if not os.path.exists(template_path):
+            self.log_and_progress(f"Template not found: {template_path}", "error")
+            return None
+            
+        try:
+            doc = Document(template_path)
+            replacements = {
+                '{{RESUMO_EXECUTIVO}}': parsed_data.get('RESUMO_EXECUTIVO', ''),
+                '{{DIAGNOSTICO}}': parsed_data.get('DIAGNOSTICO', ''),
+                '{{LACUNAS}}': parsed_data.get('LACUNAS', ''),
+                '{{CLASSIFICACAO}}': parsed_data.get('CLASSIFICACAO', ''),
+                '{{OBSERVACOES_XALQ}}': parsed_data.get('OBSERVACOES_XALQ', ''),
+                '{{tipo_agente}}': agent_type,
+                '{{modelo_gemini}}': model_name,
+                '{{timestamp}}': timestamp
+            }
+            
+            # Helper to replace in paragraphs
+            def replace_in_p(p):
+                for key, val in replacements.items():
+                    if key in p.text:
+                        p.text = p.text.replace(key, str(val))
+            
+            for p in doc.paragraphs: replace_in_p(p)
+            for t in doc.tables:
+                for r in t.rows:
+                    for c in r.cells:
+                        for p in c.paragraphs: replace_in_p(p)
+
+            out_name = f"{self.sanitize_filename(prefix)}_{self.sanitize_filename(model_name)}_report_{timestamp}.docx"
+            out_path = os.path.join(self.output_dir, out_name)
+            doc.save(out_path)
+            return out_path
+        except Exception as e:
+            self.log_and_progress(f"Erro na geração do DOCX: {e}", "error")
+            return None
+
+    def get_available_models(self):
+        # Return sensible defaults, dynamic fetched in UI if needed, 
+        # but here we just need to return what's "supported" by the tool
+        return ["gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"]
+
+    def get_prompts_list(self):
+        try:
+             # Just list local ones + hardcoded knowns
+             local = [os.path.splitext(f)[0] for f in os.listdir(self.prompts_dir) if f.endswith('.md')]
+             return list(set(local + ["revenue", "operations"]))
+        except:
+             return ["revenue", "operations"]
+             
     def load_data(self, file_path):
         import pandas as pd
         try:
@@ -328,119 +396,6 @@ class WorkerEngine:
             self.log_and_progress(f"Erro ao carregar dados: {e}", "error")
             return None, []
 
-    def save_prompt_content(self, filename, content):
-        try:
-            path = os.path.join(self.prompts_dir, filename)
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(content)
-            return True
-        except Exception as e:
-            self.logger.error(f"Erro ao salvar prompt {filename}: {e}")
-            return False
-
-    def sanitize_filename(self, text):
-        # Remove invalid chars for filenames
-        if not isinstance(text, str): return "unknown"
-        sanitized = re.sub(r'[<>:"/\\|?*]', '', text)
-        sanitized = re.sub(r'\s+', '_', sanitized)
-        # Ensure only 0-9, a-z, A-Z, _, - are kept if being strict, 
-        # but allowing unicode is usually fine on modern OS.
-        # Let's keep it simple:
-        sanitized = re.sub(r'[^\w\-\.]', '_', sanitized)
-        sanitized = re.sub(r'_{2,}', '_', sanitized)
-        sanitized = re.sub(r'-{2,}', '-', sanitized)
-        return sanitized.strip('_-')
-
-    def generate_word_report(self, parsed_data, agent_type, model_name, timestamp, prefix):
-        template_path = os.path.join(self.templates_dir, 'template_xalq.docx')
-        if not os.path.exists(template_path):
-            self.log_and_progress(f"Template not found: {template_path}", "error")
-            return None
-            
-        try:
-            doc = Document(template_path)
-            
-            replacements = {
-                '{{RESUMO_EXECUTIVO}}': parsed_data.get('RESUMO_EXECUTIVO', ''),
-                '{{DIAGNOSTICO}}': parsed_data.get('DIAGNOSTICO', ''),
-                '{{LACUNAS}}': parsed_data.get('LACUNAS', ''),
-                '{{CLASSIFICACAO}}': parsed_data.get('CLASSIFICACAO', ''),
-                '{{OBSERVACOES_XALQ}}': parsed_data.get('OBSERVACOES_XALQ', ''),
-                '{{tipo_agente}}': agent_type,
-                '{{modelo_ollama}}': model_name, # Kept tag name for compatibility
-                '{{timestamp}}': timestamp
-            }
-            for p in doc.paragraphs:
-                for key, val in replacements.items():
-                    if key in p.text:
-                        p.text = p.text.replace(key, str(val))
-                        
-            # Tables
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        for p in cell.paragraphs:
-                            for key, val in replacements.items():
-                                if key in p.text:
-                                    # Simple replacement, preserving run style is harder without more complex logic
-                                    # For now, direct text replacement
-                                    text = p.text.replace(key, str(val))
-                                    p.text = text
-                                    # Force font? (optional)
-                                    # for run in p.runs:
-                                    #     run.font.name = 'Calibri'
-            # Also invoke tables replacement if needed (not implemented here but good to keep in mind)
-
-            out_name = f"{self.sanitize_filename(prefix)}_{self.sanitize_filename(model_name)}_report_{timestamp}.docx"
-            out_path = os.path.join(self.output_dir, out_name)
-            doc.save(out_path)
-            return out_path
-        except Exception as e:
-            self.log_and_progress(f"Error generating report: {e}", "error")
-            return None
-
-    def get_available_models(self):
-        """Return available Gemini models, dynamically checking API if possible."""
-        default_models = ["models/gemini-2.5-flash", "models/gemini-2.5-pro", "models/gemini-flash-latest"]
-        try:
-            if self.api_key:
-                # Try to fetch real list
-                real_models = []
-                count = 0
-                for m in genai.list_models():
-                    if 'generateContent' in m.supported_generation_methods:
-                        name = m.name
-                        # Optimization: Filter out likely unstable/experimental models to avoid API rate limits
-                        lower_name = name.lower()
-                        if any(x in lower_name for x in ['preview', 'exp', 'vision', 'image', 'tts', 'computer', 'robotics', 'nano']):
-                            continue
-                        
-                        # strip 'models/' prefix for display if desired, but for this specific "future" API it seems stricter
-                        # We will keep the full name to be safe, or just the short name if it works. 
-                        # Based on logs, 'models/' prefix is safer.
-                        real_models.append(name)
-                        count += 1
-                        
-                if real_models:
-                    # Sort to put shorter/cleaner names first
-                    real_models.sort(key=len)
-                    return list(dict.fromkeys(real_models + default_models)) 
-        except:
-            pass
-            
-        return default_models
-        
-    def get_prompts_list(self):
-        """Return list of available prompt files."""
-        # Hardcoded for now based on user request / known types
-        # Or scan folder
-        try:
-            files = [f for f in os.listdir(self.prompts_dir) if f.endswith('.md')]
-            # Remove extension for display
-            return [os.path.splitext(f)[0] for f in files] + ["revenue", "operations"]
-        except:
-            return ["revenue", "operations"]
-
     def process_file(self, file_path, model_override=None, rows_to_process=None, prompt_type_override=None):
         import pandas as pd
         self.log_and_progress(f"Lendo arquivo: {file_path}")
@@ -450,68 +405,63 @@ class WorkerEngine:
 
         generated_files = []
         
-        # Config setup
+        # User Defined Defaults
         config = {
-            'model': model_override or 'models/gemini-2.5-flash',
-            'temperature': 0.2,
-            'top_p': 0.9
+            'model': model_override or 'gemini-1.5-pro',
+            'temperature': 0.1 # Base temp, call_ai_api adjusts per model
         }
-        
-        # Log prompt type override if provided
-        if prompt_type_override:
-            self.log_and_progress(f"Tipo de análise forçado: {prompt_type_override}")
 
         total = len(df)
-        self.log_and_progress(f"Total de linhas: {total}")
+        self.log_and_progress(f"Iniciando processamento de {total} linhas...")
 
         for row_idx, row in df.iterrows():
-            # Check row filter
-            if rows_to_process and row_idx not in rows_to_process:
-                continue
-
-            # Prefix from company name
+            if rows_to_process and row_idx not in rows_to_process: continue
+            
+            # Name Prefix
             prefix = f"Row_{row_idx}"
-            col_name = 'Nome da Empresa'
-            if col_name in row.index:
-                prefix = str(row[col_name])
-
-            self.log_and_progress(f"Processando linha {row_idx}/{total}...")
             
-            # Determine Prompt Type
-            if prompt_type_override:
-                agent_type = prompt_type_override
-                self.log_and_progress(f"Linha {row_idx}: Usando tipo manual: {agent_type}")
+            # Re-detect col for prefix (redundant but safe)
+            for col in df.columns:
+                 if any(c in str(col).lower() for c in ['nome da empresa', 'empresa', 'company']):
+                      prefix = str(row[col])
+                      break
+            
+            self.log_and_progress(f"--- Processando: {prefix} ({row_idx+1}/{total}) ---")
+            
+            # 1. Determine Prompt
+            if prompt_type_override and "Automático" not in prompt_type_override:
+                p_type = prompt_type_override
             else:
-                col_name = 'Qual o principal modelo de atuação da empresa?'
-                if col_name not in row.index:
-                    self.log_and_progress(f"Linha {row_idx}: Coluna de modelo de atuação não encontrada.", "error")
-                    continue
-                agent_type = str(row[col_name]).strip().lower()
-                self.log_and_progress(f"Linha {row_idx}: Tipo detectado: {agent_type}")
+                 # Auto detect
+                 # Heuristic: Find a column asking for "modelo de atuação"
+                 p_type = "revenue" # Default backup
+                 for c in df.columns:
+                     if "modelo" in str(c).lower():
+                         p_type = str(row[c]).strip()
+                         break
             
-            # Fetch prompt (Local -> GitHub)
-            prompt_template = self.load_agent_prompt(agent_type)
-            if not prompt_template: 
-                self.log_and_progress(f"Linha {row_idx}: Prompt não encontrado, pulando.", "error")
+            # 2. Load Prompt
+            prompt_text = self.load_agent_prompt(p_type)
+            if not prompt_text:
+                self.log_and_progress(f"Prompt não encontrado para '{p_type}'. Pulando.", "error")
                 continue
-
-            self.log_and_progress(f"Linha {row_idx}: Chamando Gemini ({config['model']})...")
-            ai_response = self.call_ai_api(f"{prompt_template}\nDados:\n{row.to_string()}", config)
-            if not ai_response: 
-                self.log_and_progress(f"Linha {row_idx}: Falha na resposta da IA.", "error")
+                
+            # 3. Call AI
+            full_prompt = f"{prompt_text}\n\nDADOS DO CLIENTE:\n{row.to_string()}"
+            response = self.call_ai_api(full_prompt, config)
+            
+            if not response:
+                self.log_and_progress("Falha na geração da IA.", "error")
                 continue
-
-            self.log_and_progress(f"Linha {row_idx}: Parsing resposta...")
-            parsed_data = self.parse_ollama_response(ai_response)
+                
+            # 4. Parse & Save
+            parsed = self.parse_response(response)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            rpt = self.generate_word_report(parsed, p_type, config['model'], timestamp, prefix)
             
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            
-            report_path = self.generate_word_report(parsed_data, agent_type, config['model'], timestamp, prefix)
-            if report_path:
-                self.log_and_progress(f"Linha {row_idx}: Relatório gerado.")
-                generated_files.append(report_path)
-            else:
-                self.log_and_progress(f"Linha {row_idx}: Erro ao gerar relatório.", "error")
+            if rpt:
+                generated_files.append(rpt)
+                self.log_and_progress("Relatório gerado com sucesso.", "info")
         
-        self.log_and_progress("Processamento concluído.")
+        self.log_and_progress("Processamento finalizado.")
         return generated_files

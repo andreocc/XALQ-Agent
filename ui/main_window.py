@@ -1,469 +1,419 @@
-import sys
 import os
-from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                               QLabel, QPushButton, QLineEdit, QFileDialog, 
-                               QListWidget, QListWidgetItem, QProgressBar, QMessageBox,
-                               QComboBox, QFrame)
-from PySide6.QtCore import Qt, QThread, QSize, QSettings, QObject, Signal
-from PySide6.QtGui import QIcon, QPixmap, QAction
+import sys
+import webbrowser
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QPushButton, QLabel, QFileDialog, QComboBox, 
+    QTextEdit, QProgressBar, QMessageBox, QFrame,
+    QLineEdit, QDialog
+)
+from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
+from PySide6.QtGui import QIcon, QFont, QAction, QColor, QPalette
 
-from core.processing_worker import ProcessingWorker
 from core.worker_engine import WorkerEngine
+from core.processing_worker import ProcessingWorker
+from core.updater import Updater
 from ui.settings_dialog import SettingsDialog
 from ui.resource_monitor import ResourceMonitor
 
-from core.updater import Updater
-
-class UpdateWorker(QObject):
-    finished = Signal(bool, dict) # update_available, remote_data
-    
-    def __init__(self, updater):
-        super().__init__()
-        self.updater = updater
-
-    def run(self):
-        is_update, data = self.updater.check_for_updates()
-        self.finished.emit(is_update, data)
+# --- Premium Stylesheet (Dark Blue/Grey) ---
+DARK_THEME_QSS = """
+QMainWindow {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+}
+QWidget {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    font-family: 'Segoe UI', 'Roboto', sans-serif;
+    font-size: 14px;
+}
+QFrame#MainContainer {
+    background-color: #1e1e2e;
+    border: none;
+}
+QFrame#Card {
+    background-color: #262636;
+    border-radius: 12px;
+    border: 1px solid #313244;
+}
+QLabel {
+    color: #cdd6f4;
+}
+QLabel#Title {
+    font-size: 24px;
+    font-weight: bold;
+    color: #89b4fa;
+}
+QLabel#Subtitle {
+    font-size: 14px;
+    color: #a6adc8;
+}
+QLabel#StatusFooter {
+    font-size: 12px;
+    color: #6c7086;
+    padding: 5px;
+}
+QPushButton {
+    background-color: #313244;
+    color: #cdd6f4;
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: bold;
+}
+QPushButton:hover {
+    background-color: #45475a;
+    border-color: #585b70;
+}
+QPushButton:pressed {
+    background-color: #1e1e2e;
+}
+QPushButton#PrimaryButton {
+    background-color: #89b4fa;
+    color: #1e1e2e;
+    border: none;
+}
+QPushButton#PrimaryButton:hover {
+    background-color: #b4befe;
+}
+QComboBox {
+    background-color: #313244;
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    padding: 5px;
+    color: #cdd6f4;
+}
+QComboBox:hover {
+    border-color: #585b70;
+}
+QComboBox::drop-down {
+    border: none;
+}
+QLineEdit {
+    background-color: #313244;
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    padding: 5px;
+    color: #cdd6f4;
+}
+QTextEdit {
+    background-color: #11111b;
+    border: 1px solid #313244;
+    border-radius: 8px;
+    color: #a6adc8;
+    font-family: 'Consolas', 'Monospace';
+    font-size: 13px;
+    padding: 10px;
+}
+QProgressBar {
+    background-color: #313244;
+    border-radius: 6px;
+    text-align: center;
+    color: #cdd6f4;
+}
+QProgressBar::chunk {
+    background-color: #89b4fa;
+    border-radius: 6px;
+}
+/* Scrollbar */
+QScrollBar:vertical {
+    border: none;
+    background: #1e1e2e;
+    width: 10px;
+    margin: 0px 0px 0px 0px;
+}
+QScrollBar::handle:vertical {
+    background: #45475a;
+    min-height: 20px;
+    border-radius: 5px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    background: none;
+}
+"""
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.updater = Updater()
-        local_ver = self.updater.get_local_version().get("version", "?.?.?")
-        self.setWindowTitle(f"XALQ Agent v{local_ver} - Processador de Relatórios")
-        self.setGeometry(100, 100, 800, 700)
+        self.setWindowTitle("XALQ Agent Enterprise")
+        self.setMinimumSize(1000, 700)
         
-        # Central Widget
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(15)
+        # Apply Theme
+        self.setStyleSheet(DARK_THEME_QSS)
 
-        # 1. Logo Section
-        self.logo_label = QLabel()
-        self.logo_label.setAlignment(Qt.AlignCenter)
-        self._load_logo()
-        main_layout.addWidget(self.logo_label)
-
-        # 1.1 Resource Monitor (New)
-        res_layout = QHBoxLayout()
-        res_layout.addStretch()
-        self.lbl_cpu = QLabel("CPU: -%")
-        self.lbl_cpu.setStyleSheet("font-size: 10px; color: #666; margin-right: 10px;")
-        res_layout.addWidget(self.lbl_cpu)
+        # Core Components
+        self.worker_engine = WorkerEngine(progress_callback=self.update_log_from_worker)
+        self.processing_thread = None
+        self.updater = Updater(os.path.dirname(os.path.abspath(__file__)))
         
-        self.lbl_ram = QLabel("RAM: -%")
-        self.lbl_ram.setStyleSheet("font-size: 10px; color: #666;")
-        res_layout.addWidget(self.lbl_ram)
-        main_layout.addLayout(res_layout)
-
-        # Start Monitor
-        self.res_monitor = ResourceMonitor(self)
-        self.res_monitor.usage_update.connect(self.update_resources)
-        self.res_monitor.start()
-
-        # 2. File Selection Section
-        file_layout = QHBoxLayout()
-        self.file_input = QLineEdit()
-        self.file_input.setPlaceholderText("Selecione o arquivo CSV ou XLSX para processar...")
-        self.file_input.setReadOnly(True)
-        file_layout.addWidget(self.file_input)
-
-        self.btn_browse = QPushButton("📁 Escolher Arquivo")
-        self.btn_browse.clicked.connect(self.browse_file)
-        file_layout.addWidget(self.btn_browse)
-        main_layout.addLayout(file_layout)
-
-        # 2.1 Model Selection & Settings Section (New)
-        model_layout = QHBoxLayout()
+        self.setup_ui()
+        self.check_local_version()
         
-        model_layout.addWidget(QLabel("Modelo Gemini:"))
-        self.model_combo = QComboBox()
-        self.model_combo.setMinimumWidth(150)
-        model_layout.addWidget(self.model_combo)
+        # Async Version Check
+        QTimer.singleShot(1000, self.check_remote_version)
+
+    def setup_ui(self):
+        # Main Layout
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_h_layout = QHBoxLayout(main_widget)
+        main_h_layout.setContentsMargins(0, 0, 0, 0)
+        main_h_layout.setSpacing(0)
+
+        # Content Area
+        content_frame = QFrame()
+        content_frame.setObjectName("MainContainer")
+        content_layout = QVBoxLayout(content_frame)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+        content_layout.setSpacing(15)
         
-        self.btn_refresh_models = QPushButton("🔄")
-        self.btn_refresh_models.setToolTip("Atualizar lista de modelos")
-        self.btn_refresh_models.setMaximumWidth(30)
-        self.btn_refresh_models.clicked.connect(self.refresh_models)
-        model_layout.addWidget(self.btn_refresh_models)
+        main_h_layout.addWidget(content_frame)
 
-        # Spacer
-        model_layout.addStretch()
-
-        self.btn_settings = QPushButton("⚙ Configurar")
+        # --- Header ---
+        header_layout = QHBoxLayout()
+        
+        title_container = QVBoxLayout()
+        title = QLabel("XALQ Agent")
+        title.setObjectName("Title")
+        subtitle = QLabel("Enterprise Intelligence System")
+        subtitle.setObjectName("Subtitle")
+        title_container.addWidget(title)
+        title_container.addWidget(subtitle)
+        
+        header_layout.addLayout(title_container)
+        header_layout.addStretch()
+        
+        # Settings Button
+        self.btn_settings = QPushButton("⚙ Configurações")
         self.btn_settings.clicked.connect(self.open_settings)
-        model_layout.addWidget(self.btn_settings)
+        header_layout.addWidget(self.btn_settings)
 
-        main_layout.addLayout(model_layout)
-
-        # 2.2 Prompt Type Selection (New)
-        prompt_type_layout = QHBoxLayout()
-        prompt_type_layout.addWidget(QLabel("Tipo de Análise:"))
-        self.prompt_type_combo = QComboBox()
-        self.prompt_type_combo.setMinimumWidth(200)
-        prompt_type_layout.addWidget(self.prompt_type_combo)
+        # Resource Monitor (Mini)
+        self.resource_monitor = ResourceMonitor()
+        self.resource_monitor.setStyleSheet("background-color: transparent;")
+        header_layout.addWidget(self.resource_monitor)
         
-        self.btn_refresh_prompts = QPushButton("🔄")
-        self.btn_refresh_prompts.setToolTip("Atualizar lista de prompts")
-        self.btn_refresh_prompts.setMaximumWidth(30)
-        self.btn_refresh_prompts.clicked.connect(self.refresh_prompts)
-        prompt_type_layout.addWidget(self.btn_refresh_prompts)
-
-        prompt_type_layout.addStretch()
-        main_layout.addLayout(prompt_type_layout)
-
-        # 2.3 Company Selection (New)
-        company_layout = QHBoxLayout()
-        company_layout.addWidget(QLabel("Selecionar Empresa (Linha):"))
-        self.company_combo = QComboBox()
-        self.company_combo.addItem("Todas as Empresas (Processamento Completo)")
-        self.company_combo.setEnabled(False)
-        company_layout.addWidget(self.company_combo)
-        main_layout.addLayout(company_layout)
-
-        # 3. Action Buttons Section
-        btn_layout = QHBoxLayout()
-        self.btn_start = QPushButton("▶ Iniciar Processamento")
-        self.btn_start.clicked.connect(self.start_processing)
-        self.btn_start.setEnabled(False) 
-        # Optional styling
-        self.btn_start.setStyleSheet("font-weight: bold; font-size: 14px; padding: 10px;")
+        content_layout.addLayout(header_layout)
         
-        btn_layout.addWidget(self.btn_start)
-        main_layout.addLayout(btn_layout)
+        # Banner for Updates (Hidden by default)
+        self.update_banner = QLabel("🚀 Nova versão disponível! Reinicie para aplicar.")
+        self.update_banner.setStyleSheet("background-color: #a6e3a1; color: #1e1e2e; padding: 10px; border-radius: 6px; font-weight: bold;")
+        self.update_banner.setAlignment(Qt.AlignCenter)
+        self.update_banner.hide()
+        content_layout.addWidget(self.update_banner)
 
-        # 4. Status Indicators
-        self.status_label = QLabel("Aguardando arquivo...")
-        self.status_label.setStyleSheet("font-weight: bold; color: #555;")
-        main_layout.addWidget(self.status_label)
+        # --- Card: Input & Configuration ---
+        config_card = QFrame()
+        config_card.setObjectName("Card")
+        card_layout = QVBoxLayout(config_card)
+        card_layout.setContentsMargins(20, 20, 20, 20)
 
+        # File Selection
+        file_layout = QHBoxLayout()
+        self.file_path_input = QLineEdit()
+        self.file_path_input.setPlaceholderText("Selecione o arquivo de dados (.xlsx, .csv)...")
+        self.file_path_input.setReadOnly(True)
+        
+        btn_select_file = QPushButton("📂 Selecionar Arquivo")
+        btn_select_file.clicked.connect(self.select_file)
+        
+        file_layout.addWidget(self.file_path_input)
+        file_layout.addWidget(btn_select_file)
+        card_layout.addLayout(file_layout)
+        
+        # Options Grid
+        opts_layout = QHBoxLayout()
+        
+        # Model Selection
+        mdl_layout = QVBoxLayout()
+        mdl_layout.addWidget(QLabel("Modelo Gemini:"))
+        self.combo_model = QComboBox()
+        # Default options, will try to fetch more
+        self.available_models = ["gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"]
+        self.combo_model.addItems(self.available_models)
+        self.combo_model.setCurrentText("gemini-1.5-pro")
+        mdl_layout.addWidget(self.combo_model)
+        opts_layout.addLayout(mdl_layout)
+        
+        # Analysis Type
+        type_layout = QVBoxLayout()
+        type_layout.addWidget(QLabel("Tipo de Análise:"))
+        self.combo_prompt_type = QComboBox()
+        self.combo_prompt_type.addItems(["Automático (Detectar)", "revenue", "operations"])
+        type_layout.addWidget(self.combo_prompt_type)
+        opts_layout.addLayout(type_layout)
+        
+        card_layout.addLayout(opts_layout)
+        content_layout.addWidget(config_card)
+
+        # --- Action ---
+        action_layout = QHBoxLayout()
+        self.btn_process = QPushButton("▶ Iniciar Processamento")
+        self.btn_process.setObjectName("PrimaryButton")
+        self.btn_process.setFixedHeight(45)
+        self.btn_process.clicked.connect(self.start_processing)
+        action_layout.addWidget(self.btn_process)
+        content_layout.addLayout(action_layout)
+
+        # --- Logs ---
+        content_layout.addWidget(QLabel("Logs de Execução:"))
+        self.log_area = QTextEdit()
+        self.log_area.setReadOnly(True)
+        content_layout.addWidget(self.log_area)
+
+        # Progress Bar
         self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setRange(0, 0) # Indeterminate initially
-        self.progress_bar.setVisible(False)
-        main_layout.addWidget(self.progress_bar)
+        self.progress_bar.setFixedHeight(6) # Slim
+        content_layout.addWidget(self.progress_bar)
 
-        # 5. Timeline / Log
-        lbl_timeline = QLabel("Progresso do Processamento:")
-        lbl_timeline.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        main_layout.addWidget(lbl_timeline)
+        # --- Footer ---
+        self.lbl_status = QLabel("Inicializando...")
+        self.lbl_status.setObjectName("StatusFooter")
+        self.lbl_status.setAlignment(Qt.AlignRight)
+        content_layout.addWidget(self.lbl_status)
         
-        self.timeline_list = QListWidget()
-        main_layout.addWidget(self.timeline_list)
+        # Populate models async
+        QTimer.singleShot(500, self.refresh_models)
 
-        # Internal State
-        self.worker = None
-        self.thread = None
-        self.generated_files_cache = []
-        
-        # Settings persistence
-        self.settings = QSettings("XALQ", "XALQ Agent")
+    def check_local_version(self):
+        try:
+            with open(os.path.join(self.updater.base_dir, 'version.json'), 'r', encoding='utf-8') as f:
+                import json
+                v_data = json.load(f)
+                self.local_version = v_data.get('version', 'Unknown')
+                self.lbl_status.setText(f"XALQ v{self.local_version} | Status: Pronto")
+        except:
+             self.local_version = "Unknown"
 
-        # Initializes models
-        self.refresh_models()
-        self.refresh_prompts()
-        
-        # Restore last used model
-        self._restore_last_model()
-        
-        # Trigger update check (threaded)
-        self._start_update_check()
-    
-    def _start_update_check(self):
-        self.update_thread = QThread()
-        self.update_worker = UpdateWorker(self.updater)
-        self.update_worker.moveToThread(self.update_thread)
-        
-        self.update_thread.started.connect(self.update_worker.run)
-        self.update_worker.finished.connect(self.handle_update_check)
-        self.update_worker.finished.connect(self.update_thread.quit)
-        self.update_worker.finished.connect(self.update_worker.deleteLater)
-        self.update_thread.finished.connect(self.update_thread.deleteLater)
-        
-        self.update_thread.start()
-        
-    def handle_update_check(self, is_update, remote_data):
-        if is_update:
-            remote_ver = remote_data.get("version", "?")
-            is_critical = remote_data.get("critical_update", False)
-            
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Atualização Disponível")
-            msg.setText(f"Uma nova versão ({remote_ver}) está disponível.")
-            
-            if is_critical:
-                msg.setIcon(QMessageBox.Critical)
-                msg.setInformativeText("Esta é uma atualização crítica. O sistema será atualizado automaticamente agora.")
-                msg.setStandardButtons(QMessageBox.Ok)
-                msg.exec()
-                self._run_auto_update()
-            else:
-                msg.setIcon(QMessageBox.Question)
-                msg.setInformativeText("Deseja atualizar agora?")
-                msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-                msg.setDefaultButton(QMessageBox.Yes)
-                ret = msg.exec()
-                
-                if ret == QMessageBox.Yes:
-                    self._run_auto_update()
-        else:
-            self.add_timeline_event("✅ Aplicação atualizada (v" + self.updater.get_local_version().get("version") + ")")
-
-    def _run_auto_update(self):
-        self.status_label.setText("Atualizando sistema...")
-        self.progress_bar.setVisible(True)
-        self.add_timeline_event("⬇️ Iniciando atualização via Git...", "process")
-        
-        success, message = self.updater.perform_update()
-        
-        self.progress_bar.setVisible(False)
-        if success:
-            QMessageBox.information(self, "Sucesso", message)
-            sys.exit(0)
-        else:
-            QMessageBox.critical(self, "Erro na Atualização", message)
-            self.add_timeline_event(f"❌ {message}", "error")
-
-    def _load_logo(self):
-        # Resolve path relative to this file
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        # Assuming structure: ui/main_window.py -> templates/img/0_XALQ-0.png
-        # So we go up one level then into templates/img
-        logo_path = os.path.join(current_dir, "..", "templates", "img", "0_XALQ-0.png")
-        logo_path = os.path.normpath(logo_path)
-        
-        if os.path.exists(logo_path):
-            pixmap = QPixmap(logo_path)
-            # Scale if too large (760 is max width for 800px window with 20px margins)
-            if pixmap.width() > 760:
-                pixmap = pixmap.scaledToWidth(760, Qt.SmoothTransformation)
-            self.logo_label.setPixmap(pixmap)
-        else:
-            self.logo_label.setText(f"[Logotipo não encontrado em: {logo_path}]")
-            self.logo_label.setStyleSheet("color: red;")
-
-    def browse_file(self):
-        file_name, _ = QFileDialog.getOpenFileName(
-            self, 
-            "Selecionar Arquivo de Dados", 
-            "", 
-            "Arquivos Excel/CSV (*.xlsx *.xls *.csv);;Todos os Arquivos (*)"
-        )
-        if file_name:
-            self.file_input.setText(file_name)
-            self.status_label.setText("Carregando dados do arquivo...")
-            self.add_timeline_event(f"📄 Arquivo selecionado: {os.path.basename(file_name)}")
-            
-            # Load company data
-            engine = WorkerEngine()
-            _, items = engine.load_data(file_name)
-            
-            self.company_combo.clear()
-            self.company_combo.addItem("Todas as Empresas (Processamento Completo)")
-            if items:
-                self.company_combo.addItems(items)
-                self.company_combo.setEnabled(True)
-                self.add_timeline_event(f"📋 {len(items)} empresas identificadas.")
-            else:
-                self.company_combo.setEnabled(False)
-                self.add_timeline_event("⚠️ Nenhuma empresa identificada ou erro ao ler arquivo.", "error")
-
-            self.btn_start.setEnabled(True)
-            self.status_label.setText("Arquivo carregado. Pronto para iniciar.")
+    def check_remote_version(self):
+        # Simple non-blocking update check logic simulated or via Updater
+        # For now, let's trust Updater's logic if implemented, or just check JSON
+        # Calling Updater synchronously here for simplicity as it's quick usually
+        try:
+            has_update, new_v = self.updater.check_for_updates()
+            if has_update:
+                self.update_banner.setText(f"🚀 Nova versão disponível ({new_v})! Reinicie para aplicar.")
+                self.update_banner.show()
+                # Auto-pull logic is in Updater, we just notify
+        except Exception as e:
+            print(f"Update check failed: {e}")
 
     def refresh_models(self):
-        engine = WorkerEngine()
-        models = engine.get_available_models()
-        self.model_combo.clear()
-        if models:
-            self.model_combo.addItems(models)
-            self.status_label.setText(f"Modelos carregados: {len(models)}")
-        else:
-            self.model_combo.addItem("gemini-1.5-pro") # Default fallback
-            self.status_label.setText("Usando modelos padrão.")
-    
-    def refresh_prompts(self):
-        engine = WorkerEngine()
-        prompts = engine.get_prompts_list()
-        self.prompt_type_combo.clear()
-        
-        # Add "Automatic" option first
-        self.prompt_type_combo.addItem("Automático (Detectar pelo conteúdo)")
-        
-        if prompts:
-            self.prompt_type_combo.addItems(prompts)
-            self.status_label.setText(f"Prompts carregados: {len(prompts)}")
-        else:
-            self.prompt_type_combo.addItem("revenue") # Fallback
-            self.prompt_type_combo.addItem("operations") # Fallback
-            self.status_label.setText("Nenhum prompt encontrado. Usando padrões.")
-            
-        self.prompt_type_combo.setCurrentIndex(0) # Select Automatic by default
-    
-    def _restore_last_model(self):
-        """Restore the last used model selection."""
-        last_model = self.settings.value("last_model", "")
-        if last_model:
-            index = self.model_combo.findText(last_model)
-            if index >= 0:
-                self.model_combo.setCurrentIndex(index)
-                self.add_timeline_event(f"🔄 Modelo anterior restaurado: {last_model}")
-    
-    def _save_last_model(self, model_name):
-        """Save the currently selected model."""
-        self.settings.setValue("last_model", model_name)
-        self.settings.sync()
+        try:
+            # Try to fetch real models from worker
+            real = self.worker_engine.get_available_models()
+            if real:
+                current = self.combo_model.currentText()
+                self.combo_model.clear()
+                self.combo_model.addItems(real)
+                # Restore selection or default to Pro
+                idx = self.combo_model.findText(current)
+                if idx >= 0:
+                     self.combo_model.setCurrentIndex(idx)
+                else:
+                     # Default to 1.5-pro if available
+                     idx_pro = self.combo_model.findText("gemini-1.5-pro")
+                     if idx_pro >= 0: 
+                         self.combo_model.setCurrentIndex(idx_pro)
+        except:
+            pass
+
+    def select_file(self):
+        f, _ = QFileDialog.getOpenFileName(self, "Selecionar Arquivo", "", "Excel/CSV Files (*.xlsx *.csv)")
+        if f:
+            self.file_path_input.setText(f)
+            self.log(f"Arquivo selecionado: {f}", "info")
 
     def open_settings(self):
-        dialog = SettingsDialog(self)
-        dialog.exec()
-
-    def add_timeline_event(self, message, status_type="info"):
-        item = QListWidgetItem(message)
-        # Simple coloring/icon logic
-        if "❌" in message or "erro" in message.lower() or status_type == "error":
-            item.setForeground(Qt.red)
-        elif "✅" in message or "sucess" in message.lower():
-            item.setForeground(Qt.darkGreen)
-        elif "⏳" in message or "processando" in message.lower():
-            item.setForeground(Qt.blue)
-        elif "📂" in message:
-             item.setForeground(Qt.blue)
-        
-        self.timeline_list.addItem(item)
-        self.timeline_list.scrollToBottom()
+        dlg = SettingsDialog(self)
+        dlg.exec()
+        # Reload worker engine key
+        self.worker_engine = WorkerEngine(progress_callback=self.update_log_from_worker)
 
     def start_processing(self):
-        file_path = self.file_input.text()
+        file_path = self.file_path_input.text()
         if not file_path:
-            QMessageBox.warning(self, "Aviso", "Por favor, selecione um arquivo primeiro.")
+            QMessageBox.warning(self, "Aviso", "Selecione um arquivo primeiro.")
             return
+
+        model = self.combo_model.currentText()
+        prompt_type = self.combo_model_prompt_type_text()
+
+        self.btn_process.setEnabled(False)
+        self.progress_bar.setRange(0, 0) # Indeterminate pulsating
+        self.lbl_status.setText(f"🧠 Processando via: {model}...")
+
+        # Worker Thread
+        self.processing_thread = QThread()
+        self.worker = ProcessingWorker(self.worker_engine, file_path, model, prompt_type_override=prompt_type)
+        self.worker.moveToThread(self.processing_thread)
+
+        self.processing_thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self.on_processing_finished)
+        self.worker.progress.connect(self.update_log_from_worker)
+        self.worker.error.connect(self.on_processing_error)
+
+        self.processing_thread.start()
+
+    def combo_model_prompt_type_text(self):
+        txt = self.combo_prompt_type.currentText()
+        if "Automático" in txt: return None
+        return txt
+
+    def on_processing_finished(self):
+        self.btn_process.setEnabled(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+        self.lbl_status.setText(f"XALQ v{self.local_version} | Status: Concluído")
+        self.log("Processamento finalizado com sucesso.", "success")
         
-        selected_model = self.model_combo.currentText()
-        
-        # Save the selected model for next time
-        self._save_last_model(selected_model)
-        
-        # Determine prompt type
-        prompt_type = self.prompt_type_combo.currentText()
-        if prompt_type.startswith("Automático"):
-            prompt_type = None # Let the engine detect it
-        
-        # Determine rows to process
-        rows_to_process = None
-        if self.company_combo.currentIndex() > 0: # Not "Todas"
-            # Format is "Index: Name", e.g. "1: Empresa X"
-            selected_text = self.company_combo.currentText()
-            try:
-                idx_str = selected_text.split(':')[0]
-                rows_to_process = [int(idx_str)]
-            except:
-                pass
-
-        # Prepare UI
-        self.btn_start.setEnabled(False)
-        self.btn_browse.setEnabled(False)
-        self.btn_settings.setEnabled(False) 
-        self.company_combo.setEnabled(False)
-        self.progress_bar.setVisible(True)
-        self.status_label.setText("Inicializando engine...")
-        self.timeline_list.clear()
-        self.add_timeline_event("🚀 Iniciando processamento...")
-        if rows_to_process:
-            self.add_timeline_event(f"🎯 Processando apenas a linha: {rows_to_process[0]}")
-        self.add_timeline_event(f"🧠 Modelo selecionado: {selected_model}")
-        self.add_timeline_event(f"📊 Tipo de análise: {self.prompt_type_combo.currentText()}")
-
-        self.generated_files_cache = []
-        
-        # Retrieve API Key
-        settings = QSettings("XALQ", "XALQ Agent")
-        api_key = settings.value("gemini_api_key", "")
-
-        # Setup Thread and Worker
-        self.thread = QThread()
-        self.worker = ProcessingWorker(
-            file_path, 
-            model_override=selected_model,
-            rows_to_process=rows_to_process,
-            prompt_type_override=prompt_type,
-            api_key=api_key
-        )
-        self.worker.moveToThread(self.thread)
-
-        # Connect Signals
-        self.thread.started.connect(self.worker.run)
-        
-        # Worker signals -> UI slots
-        self.worker.progress.connect(self.update_timeline)
-        self.worker.status.connect(self.update_status)
-        self.worker.error.connect(self.handle_error)
-        self.worker.files_generated.connect(self.handle_files_generated)
-        self.worker.finished.connect(self.process_finished)
-        self.worker.finished.connect(self.thread.quit)
-        self.worker.finished.connect(self.worker.deleteLater)
-        
-        self.thread.finished.connect(self.thread.deleteLater)
-        self.thread.finished.connect(self.cleanup_thread)
-
-        # Start
-        self.thread.start()
-
-    def update_timeline(self, message):
-        self.add_timeline_event(message)
-
-    def update_status(self, message):
-        self.status_label.setText(message)
-
-    def handle_error(self, message):
-        self.add_timeline_event(f"❌ Erro: {message}", "error")
-        QMessageBox.critical(self, "Erro de Processamento", message)
-
-    def handle_files_generated(self, files):
-        self.generated_files_cache = files
-        for f in files:
-            self.add_timeline_event(f"📂 Arquivo gerado: {os.path.basename(f)}")
-
-    def process_finished(self):
+        # Open output folder
         try:
-            self.status_label.setText("Processamento finalizado.")
-            self.progress_bar.setVisible(False)
-            self.btn_start.setEnabled(True)
-            self.btn_browse.setEnabled(True)
-            self.btn_settings.setEnabled(True)
-            self.company_combo.setEnabled(True)
-            self.add_timeline_event("🏁 Ciclo de execução terminado.")
+             os.startfile(self.worker_engine.output_dir)
+        except:
+             pass
 
-            if self.generated_files_cache:
-                msg_box = QMessageBox(self)
-                msg_box.setWindowTitle("Processamento Concluído!")
-                msg_box.setText("O processamento foi finalizado com sucesso.")
-                msg_box.setInformativeText(f"{len(self.generated_files_cache)} relatórios foram gerados.\nO primeiro arquivo será aberto automaticamente.")
-                msg_box.setIcon(QMessageBox.Information)
-                msg_box.exec()
+        self.processing_thread.quit()
+        self.processing_thread.wait()
 
-                # Auto-open first file
-                try:
-                    first_file = self.generated_files_cache[0]
-                    if os.path.exists(first_file):
-                        if sys.platform == 'win32':
-                            os.startfile(first_file)
-                        else:
-                            import subprocess
-                            opener = "open" if sys.platform == "darwin" else "xdg-open"
-                            subprocess.call([opener, first_file])
-                except Exception as e:
-                    self.add_timeline_event(f"⚠️ Erro ao abrir arquivo automaticamente: {e}", "error")
-        except Exception as e:
-             self.add_timeline_event(f"❌ Erro na finalização da UI: {e}", "error")
-             QMessageBox.critical(self, "Erro", f"Erro na finalização: {e}")
+    def on_processing_error(self, err_msg):
+        self.btn_process.setEnabled(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.lbl_status.setText(f"XALQ v{self.local_version} | Status: Erro")
+        self.log(f"Erro: {err_msg}", "error")
+        self.processing_thread.quit()
+        self.processing_thread.wait()
 
-    def update_resources(self, cpu, ram):
-        self.lbl_cpu.setText(f"CPU: {cpu:.1f}%")
-        self.lbl_ram.setText(f"RAM: {ram:.1f}%")
+    def update_log_from_worker(self, msg):
+        # Detect type for coloring
+        level = "info"
+        if "erro" in msg.lower() or "falha" in msg.lower(): level = "error"
+        elif "sucesso" in msg.lower() or "gerado" in msg.lower(): level = "success"
+        elif "---" in msg: level = "highlight"
+        
+        self.log(msg, level)
 
-    def cleanup_thread(self):
-        self.thread = None
-        self.worker = None
+    def log(self, message, level="info"):
+        color = "#cdd6f4" # Default Text
+        if level == "error": color = "#f38ba8" # Red
+        elif level == "success": color = "#a6e3a1" # Green
+        elif level == "highlight": color = "#89b4fa" # Blue
+        elif level == "debug": color = "#6c7086" # Grey
+
+        html = f'<span style="color:{color};">{message}</span>'
+        self.log_area.append(html)
+        # Auto scroll
+        sb = self.log_area.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+if __name__ == "__main__":
+    from PySide6.QtWidgets import QApplication
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())

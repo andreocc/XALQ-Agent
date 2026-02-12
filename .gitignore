@@ -35,6 +35,7 @@ error/
 models/
 *.docx
 !templates/*.docx
+~$*
 
 # IDEs
 .vscode/

@@ -1,17 +1,16 @@
 {
-  "version": "1.1.2",
+  "version": "1.1.3",
   "release_date": "2026-02-12",
   "min_executable_version": "1.0.0",
   "changelog": [
-    "Correção na detecção do nome da empresa (ignorando colunas de data).",
-    "Correção na autenticação do Gemini (injeção explícita de API Key).",
-    "Resolução de conflito de update e restauração do Gemini.",
-    "Migração do motor Ollama para Google Gemini API.",
-    "Sincronização dinâmica de prompts via GitHub Privado."
+    "Melhoria no parser de resposta da IA (suporte a formatação flexível).",
+    "Tratamento de bloqueios de segurança (Safety Filters) do Gemini.",
+    "Correção na detecção do nome da empresa.",
+    "Correção na autenticação do Gemini."
   ],
   "assets": {
     "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
-    "prompt_manifest_v": "20260212.03"
+    "prompt_manifest_v": "20260212.04"
   },
   "critical_update": false
 }

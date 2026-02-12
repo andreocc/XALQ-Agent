@@ -136,28 +136,85 @@ class WorkerEngine:
             self.log_and_progress(f"Enviando request para Gemini ({model_name})...", "debug")
             response = model.generate_content(prompt_content, generation_config=generation_config)
             
+            # Check for safety blocks or empty responses
+            if not response.parts:
+                if response.prompt_feedback:
+                     self.log_and_progress(f"Gemini bloqueou o prompt: {response.prompt_feedback}", "error")
+                else:
+                     self.log_and_progress("Resposta do Gemini vazia (sem parts). Verifique safety filters.", "error")
+                return None
+
             return response.text
         except Exception as e:
             self.log_and_progress(f"Gemini API Error: {e}", "error")
             return None
 
     def parse_ollama_response(self, ai_response):
-        # Renaming method call in process_file, but keeping logic generic
+        """
+        Parses response looking for [SECTION]...[/SECTION] tags.
+        Falls back to simpler parsing if strict tags are missing.
+        """
         parsed_data = {}
         sections = ["RESUMO_EXECUTIVO", "DIAGNOSTICO", "LACUNAS", "CLASSIFICACAO", "OBSERVACOES_XALQ"]
-        response_with_end_marker = ai_response + "\n[END_OF_RESPONSE]"
         
+        # 1. Try strict tagging [SECTION]...[/SECTION]
         for section in sections:
             pattern = fr"\[{section}\](.*?)\[/{section}\]"
-            match = re.search(pattern, response_with_end_marker, re.DOTALL | re.IGNORECASE)
+            match = re.search(pattern, ai_response, re.DOTALL | re.IGNORECASE)
             if match:
                 parsed_data[section] = match.group(1).strip()
             else:
-                 # Fallback for simpler tagging or Gemini variance
-                 # Try finding just [SECTION] ... next [SECTION]
-                 # For now, stick to user's prompt structure
-                 parsed_data[section] = ""
-                 
+                parsed_data[section] = ""
+
+        # 2. Validation: If most sections are empty, try fallback parsing
+        filled_sections = sum(1 for v in parsed_data.values() if v)
+        if filled_sections < 2:
+            self.log_and_progress("Tags estritas não encontradas ou incompletas. Tentando parsing flexível...", "debug")
+            # Fallback: Extract between headers
+            # Assuming headers might be like "Resumo Executivo:" or "## Resumo Executivo"
+            # We map clean names to section keys
+            
+            # Create a clean version of the response for searching
+            clean_response = ai_response
+            
+            # Map simplified headers to keys
+            header_map = {
+                "RESUMO EXECUTIVO": "RESUMO_EXECUTIVO",
+                "DIAGNOSTICO": "DIAGNOSTICO",
+                "DIAGNÓSTICO": "DIAGNOSTICO",
+                "LACUNAS": "LACUNAS",
+                "CLASSIFICAÇÃO": "CLASSIFICACAO",
+                "CLASSIFICACAO": "CLASSIFICACAO",
+                "OBSERVAÇÕES": "OBSERVACOES_XALQ",
+                "OBSERVACOES": "OBSERVACOES_XALQ"
+            }
+            
+            current_section = None
+            lines = clean_response.split('\n')
+            
+            # Temporary buffer for manual extraction
+            temp_data = {k: [] for k in sections}
+            
+            for line in lines:
+                clean_line = line.strip().upper().replace("*", "").replace("#", "").replace(":", "")
+                
+                # Check if this line is a header
+                found_header = None
+                for header, key in header_map.items():
+                   if clean_line == header:
+                       found_header = key
+                       break
+                
+                if found_header:
+                    current_section = found_header
+                elif current_section:
+                    temp_data[current_section].append(line)
+            
+            # Join collected lines
+            for key, lines in temp_data.items():
+                if lines:
+                    parsed_data[key] = "\n".join(lines).strip()
+                    
         return parsed_data
 
     def load_data(self, file_path):

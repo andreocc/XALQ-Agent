@@ -1,16 +1,15 @@
 {
-  "version": "1.1.4",
+  "version": "1.1.5",
   "release_date": "2026-02-12",
   "min_executable_version": "1.0.0",
   "changelog": [
-    "Melhoria na normalização de nomes de arquivos de prompt (caracteres especiais).",
-    "Adição da opção 'Automático' na seleção de tipo de análise.",
-    "Melhoria no parser de resposta da IA.",
-    "Tratamento de bloqueios de segurança do Gemini."
+    "Renomeação dos arquivos de prompt para compatibilidade (removidos acentos e caracteres especiais).",
+    "Melhoria na normalização de nomes de arquivos de prompt.",
+    "Adição da opção 'Automático' na seleção de tipo de análise."
   ],
   "assets": {
     "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
-    "prompt_manifest_v": "20260212.05"
+    "prompt_manifest_v": "20260212.06"
   },
   "critical_update": false
 }

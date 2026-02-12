@@ -111,8 +111,8 @@ class WorkerEngine:
         # 2. Fallback to mapped types (legacy/convenience) if no local file matched
         agent_type_mapping = {
             'b2b (vende para outras empresas)': 'revenue',
-            'revenue': '1.DIAGNÓSTICO – REVENUE DECISION (CORE).md',
-            'operations': '1.DIAGNÓSTICO – DIGITAL OPERATIONS (CORE).md',
+            'revenue': '1_diagnostico_revenue_decision_core.md',
+            'operations': '1_diagnostico_digital_operations_core.md',
         }
         
         mapped_name = agent_type_mapping.get(agent_type, agent_type)

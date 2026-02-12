@@ -1,15 +1,16 @@
 {
-  "version": "1.1.0",
+  "version": "1.1.1",
   "release_date": "2026-02-12",
   "min_executable_version": "1.0.0",
   "changelog": [
+    "Resolução de conflito de update e restauração do Gemini.",
     "Migração do motor Ollama para Google Gemini API.",
     "Sincronização dinâmica de prompts via GitHub Privado.",
     "Melhoria na segurança das API Keys no Settings Dialog."
   ],
   "assets": {
     "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
-    "prompt_manifest_v": "20260212.01"
+    "prompt_manifest_v": "20260212.02"
   },
   "critical_update": false
 }

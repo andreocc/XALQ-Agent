@@ -1,10 +1,10 @@
-import os
 import sys
+import os
 from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                QLabel, QPushButton, QLineEdit, QFileDialog, 
                                QListWidget, QListWidgetItem, QProgressBar, QMessageBox,
                                QComboBox, QFrame)
-from PySide6.QtCore import Qt, QThread, QSize, QSettings
+from PySide6.QtCore import Qt, QThread, QSize, QSettings, QObject, Signal
 from PySide6.QtGui import QIcon, QPixmap, QAction
 
 from core.processing_worker import ProcessingWorker
@@ -12,10 +12,25 @@ from core.worker_engine import WorkerEngine
 from ui.settings_dialog import SettingsDialog
 from ui.resource_monitor import ResourceMonitor
 
+from core.updater import Updater
+
+class UpdateWorker(QObject):
+    finished = Signal(bool, dict) # update_available, remote_data
+    
+    def __init__(self, updater):
+        super().__init__()
+        self.updater = updater
+
+    def run(self):
+        is_update, data = self.updater.check_for_updates()
+        self.finished.emit(is_update, data)
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("XALQ Agent - Processador de Relatórios")
+        self.updater = Updater()
+        local_ver = self.updater.get_local_version().get("version", "?.?.?")
+        self.setWindowTitle(f"XALQ Agent v{local_ver} - Processador de Relatórios")
         self.setGeometry(100, 100, 800, 700)
         
         # Central Widget
@@ -63,7 +78,7 @@ class MainWindow(QMainWindow):
         # 2.1 Model Selection & Settings Section (New)
         model_layout = QHBoxLayout()
         
-        model_layout.addWidget(QLabel("Modelo Ollama:"))
+        model_layout.addWidget(QLabel("Modelo Gemini:"))
         self.model_combo = QComboBox()
         self.model_combo.setMinimumWidth(150)
         model_layout.addWidget(self.model_combo)
@@ -77,7 +92,7 @@ class MainWindow(QMainWindow):
         # Spacer
         model_layout.addStretch()
 
-        self.btn_settings = QPushButton("⚙ Configurar Prompts")
+        self.btn_settings = QPushButton("⚙ Configurar")
         self.btn_settings.clicked.connect(self.open_settings)
         model_layout.addWidget(self.btn_settings)
 
@@ -152,6 +167,64 @@ class MainWindow(QMainWindow):
         
         # Restore last used model
         self._restore_last_model()
+        
+        # Trigger update check (threaded)
+        self._start_update_check()
+    
+    def _start_update_check(self):
+        self.update_thread = QThread()
+        self.update_worker = UpdateWorker(self.updater)
+        self.update_worker.moveToThread(self.update_thread)
+        
+        self.update_thread.started.connect(self.update_worker.run)
+        self.update_worker.finished.connect(self.handle_update_check)
+        self.update_worker.finished.connect(self.update_thread.quit)
+        self.update_worker.finished.connect(self.update_worker.deleteLater)
+        self.update_thread.finished.connect(self.update_thread.deleteLater)
+        
+        self.update_thread.start()
+        
+    def handle_update_check(self, is_update, remote_data):
+        if is_update:
+            remote_ver = remote_data.get("version", "?")
+            is_critical = remote_data.get("critical_update", False)
+            
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Atualização Disponível")
+            msg.setText(f"Uma nova versão ({remote_ver}) está disponível.")
+            
+            if is_critical:
+                msg.setIcon(QMessageBox.Critical)
+                msg.setInformativeText("Esta é uma atualização crítica. O sistema será atualizado automaticamente agora.")
+                msg.setStandardButtons(QMessageBox.Ok)
+                msg.exec()
+                self._run_auto_update()
+            else:
+                msg.setIcon(QMessageBox.Question)
+                msg.setInformativeText("Deseja atualizar agora?")
+                msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                msg.setDefaultButton(QMessageBox.Yes)
+                ret = msg.exec()
+                
+                if ret == QMessageBox.Yes:
+                    self._run_auto_update()
+        else:
+            self.add_timeline_event("✅ Aplicação atualizada (v" + self.updater.get_local_version().get("version") + ")")
+
+    def _run_auto_update(self):
+        self.status_label.setText("Atualizando sistema...")
+        self.progress_bar.setVisible(True)
+        self.add_timeline_event("⬇️ Iniciando atualização via Git...", "process")
+        
+        success, message = self.updater.perform_update()
+        
+        self.progress_bar.setVisible(False)
+        if success:
+            QMessageBox.information(self, "Sucesso", message)
+            sys.exit(0)
+        else:
+            QMessageBox.critical(self, "Erro na Atualização", message)
+            self.add_timeline_event(f"❌ {message}", "error")
 
     def _load_logo(self):
         # Resolve path relative to this file
@@ -202,15 +275,14 @@ class MainWindow(QMainWindow):
 
     def refresh_models(self):
         engine = WorkerEngine()
-        models = engine.get_ollama_models()
+        models = engine.get_available_models()
         self.model_combo.clear()
         if models:
             self.model_combo.addItems(models)
             self.status_label.setText(f"Modelos carregados: {len(models)}")
         else:
-            self.model_combo.addItem("llama3") # Default fallback
-            self.status_label.setText("Não foi possível listar modelos. Usando padrão.")
-            # self.add_timeline_event("⚠️ Falha ao conectar no Ollama para listar modelos.", "error")
+            self.model_combo.addItem("gemini-1.5-pro") # Default fallback
+            self.status_label.setText("Usando modelos padrão.")
     
     def refresh_prompts(self):
         engine = WorkerEngine()
@@ -268,7 +340,6 @@ class MainWindow(QMainWindow):
         # Save the selected model for next time
         self._save_last_model(selected_model)
         
-        # Determine prompt type
         # Determine prompt type
         prompt_type = self.prompt_type_combo.currentText()
         
@@ -367,7 +438,6 @@ class MainWindow(QMainWindow):
                         if sys.platform == 'win32':
                             os.startfile(first_file)
                         else:
-                            # Fallback for other OS if needed in future
                             import subprocess
                             opener = "open" if sys.platform == "darwin" else "xdg-open"
                             subprocess.call([opener, first_file])

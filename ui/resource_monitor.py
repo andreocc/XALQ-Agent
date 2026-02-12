@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
-from PySide6.QtCore import QThread, Signal, Qt, QTimer
+from PySide6.QtCore import QThread, Signal
 import time
 
 try:
@@ -9,7 +9,7 @@ except ImportError:
     PSUTIL_AVAILABLE = False
 
 class MonitorThread(QThread):
-    usage_update = Signal(float, float) # CPU %, RAM %
+    usage_update = Signal(float, float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -18,7 +18,6 @@ class MonitorThread(QThread):
     def run(self):
         if not PSUTIL_AVAILABLE:
             return
-
         while self._is_running:
             try:
                 cpu = psutil.cpu_percent(interval=1)
@@ -26,7 +25,7 @@ class MonitorThread(QThread):
                 self.usage_update.emit(cpu, ram)
             except Exception:
                 break
-    
+
     def stop(self):
         self._is_running = False
         self.wait()
@@ -34,20 +33,21 @@ class MonitorThread(QThread):
 class ResourceMonitor(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.layout = QHBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(10)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(10)
+
+        # Both white by default
+        self.STYLE_NORMAL = "color: #FFFFFF; font-size: 11px; font-weight: bold; background: transparent;"
+        self.STYLE_HIGH = "color: #FF6B6B; font-size: 11px; font-weight: bold; background: transparent;"
 
         self.lbl_cpu = QLabel("CPU: --%")
         self.lbl_ram = QLabel("RAM: --%")
-        
-        # Style for mini-monitor
-        style = "color: #6c7086; font-size: 11px; font-weight: bold;"
-        self.lbl_cpu.setStyleSheet(style)
-        self.lbl_ram.setStyleSheet(style)
+        self.lbl_cpu.setStyleSheet(self.STYLE_NORMAL)
+        self.lbl_ram.setStyleSheet(self.STYLE_NORMAL)
 
-        self.layout.addWidget(self.lbl_cpu)
-        self.layout.addWidget(self.lbl_ram)
+        self._layout.addWidget(self.lbl_cpu)
+        self._layout.addWidget(self.lbl_ram)
 
         if PSUTIL_AVAILABLE:
             self.thread = MonitorThread(self)
@@ -60,10 +60,10 @@ class ResourceMonitor(QWidget):
     def update_labels(self, cpu, ram):
         self.lbl_cpu.setText(f"CPU: {cpu:.1f}%")
         self.lbl_ram.setText(f"RAM: {ram:.1f}%")
-        
-        # Color coding high usage
-        if cpu > 80: self.lbl_cpu.setStyleSheet("color: #f38ba8; font-size: 11px; font-weight: bold;")
-        else: self.lbl_cpu.setStyleSheet("color: #6c7086; font-size: 11px; font-weight: bold;")
+
+        # Only turn red on extreme usage, otherwise stay white
+        self.lbl_cpu.setStyleSheet(self.STYLE_HIGH if cpu > 90 else self.STYLE_NORMAL)
+        self.lbl_ram.setStyleSheet(self.STYLE_HIGH if ram > 90 else self.STYLE_NORMAL)
 
     def closeEvent(self, event):
         if hasattr(self, 'thread'):

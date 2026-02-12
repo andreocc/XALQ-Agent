@@ -6,9 +6,9 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFileDialog, QComboBox,
     QTextEdit, QProgressBar, QMessageBox, QFrame,
-    QLineEdit, QGroupBox, QStatusBar
+    QLineEdit, QStatusBar
 )
-from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtCore import Qt, QThread, QTimer
 from PySide6.QtGui import QPixmap
 
 from core.worker_engine import WorkerEngine
@@ -19,12 +19,10 @@ from ui.resource_monitor import ResourceMonitor
 
 # --- QSS: Brand Theme (Teal + Green) ---
 BRAND_QSS = """
-/* Janela Principal */
 QMainWindow {
     background-color: #F8FAFC;
 }
 
-/* Cabeçalho Superior */
 #headerFrame {
     background-color: #2BA8A0;
     border-bottom: 3px solid #8CC63F;
@@ -37,7 +35,6 @@ QMainWindow {
     font-weight: bold;
 }
 
-/* Campos de Input e Containers */
 QGroupBox, QFrame#containerFrame {
     background-color: #FFFFFF;
     border: 1px solid #E2E8F0;
@@ -64,7 +61,6 @@ QComboBox::drop-down {
     border: none;
 }
 
-/* Botão de Ação Principal (Iniciar) */
 QPushButton#btnStart {
     background-color: #8CC63F;
     color: #FFFFFF;
@@ -79,7 +75,6 @@ QPushButton#btnStart:hover {
     background-color: #7AB535;
 }
 
-/* Botões Genéricos */
 QPushButton {
     background-color: #E2E8F0;
     color: #1E293B;
@@ -93,7 +88,6 @@ QPushButton:hover {
     background-color: #CBD5E1;
 }
 
-/* Terminal de Logs */
 QTextEdit#logArea {
     background-color: #1E293B;
     color: #8CC63F;
@@ -102,7 +96,6 @@ QTextEdit#logArea {
     padding: 10px;
 }
 
-/* Progress Bar */
 QProgressBar {
     background-color: #E2E8F0;
     border-radius: 4px;
@@ -114,14 +107,12 @@ QProgressBar::chunk {
     border-radius: 4px;
 }
 
-/* Status Bar */
 QStatusBar {
     background-color: #F1F5F9;
     color: #64748B;
     border-top: 1px solid #E2E8F0;
 }
 
-/* Scrollbar */
 QScrollBar:vertical {
     border: none;
     background: #F1F5F9;
@@ -150,6 +141,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(BRAND_QSS)
 
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.project_root = project_root
         self.updater = Updater(project_root)
 
         self.setup_ui()
@@ -158,6 +150,7 @@ class MainWindow(QMainWindow):
         self.worker_engine = WorkerEngine(progress_callback=self.update_log_from_worker)
 
         self.check_local_version()
+        QTimer.singleShot(500, self.load_prompts_from_disk)
         QTimer.singleShot(1000, self.check_remote_version)
         QTimer.singleShot(1500, self.check_github_connectivity)
 
@@ -192,17 +185,9 @@ class MainWindow(QMainWindow):
         header_layout.addWidget(app_name)
         header_layout.addStretch()
 
-        # Settings
-        btn_settings = QPushButton("⚙ Configurações")
-        btn_settings.setStyleSheet("background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3);")
-        btn_settings.clicked.connect(self.open_settings)
-        header_layout.addWidget(btn_settings)
-
-        # Resource Monitor
+        # Resource Monitor (in header, right side)
         self.resource_monitor = ResourceMonitor()
         self.resource_monitor.setStyleSheet("background: transparent;")
-        for child in self.resource_monitor.findChildren(QLabel):
-            child.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 11px; font-weight: bold; background: transparent;")
         header_layout.addWidget(self.resource_monitor)
 
         main_layout.addWidget(header)
@@ -229,7 +214,7 @@ class MainWindow(QMainWindow):
         card_layout.setContentsMargins(20, 20, 20, 20)
         card_layout.setSpacing(10)
 
-        # File
+        # File Row
         file_row = QHBoxLayout()
         self.file_path_input = QLineEdit()
         self.file_path_input.setPlaceholderText("Selecione o arquivo de dados (.xlsx, .csv)...")
@@ -240,21 +225,32 @@ class MainWindow(QMainWindow):
         file_row.addWidget(btn_file)
         card_layout.addLayout(file_row)
 
-        # Options
+        # Company selection row
+        company_row = QHBoxLayout()
+        company_row.addWidget(QLabel("Empresa:"))
+        self.combo_company = QComboBox()
+        self.combo_company.addItem("Todas (Processar tudo)")
+        self.combo_company.setMinimumWidth(300)
+        company_row.addWidget(self.combo_company, 1)
+        card_layout.addLayout(company_row)
+
+        # Options Row
         opts_row = QHBoxLayout()
 
+        # Model
         mdl_col = QVBoxLayout()
         mdl_col.addWidget(QLabel("Modelo Gemini:"))
         self.combo_model = QComboBox()
-        self.combo_model.addItems(["gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"])
-        self.combo_model.setCurrentText("gemini-1.5-pro")
+        self.combo_model.addItems(["gemini-3-pro-preview", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"])
+        self.combo_model.setCurrentText("gemini-3-pro-preview")
         mdl_col.addWidget(self.combo_model)
         opts_row.addLayout(mdl_col)
 
+        # Analysis Type (loaded from prompts/ folder)
         type_col = QVBoxLayout()
         type_col.addWidget(QLabel("Tipo de Análise:"))
         self.combo_prompt_type = QComboBox()
-        self.combo_prompt_type.addItems(["Automático (Detectar)", "revenue", "operations"])
+        self.combo_prompt_type.addItem("-- Selecione um prompt --")
         type_col.addWidget(self.combo_prompt_type)
         opts_row.addLayout(type_col)
 
@@ -285,14 +281,40 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(content, 1)
 
-        # ── Status Bar ──
+        # ── Status Bar (Footer) ──
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+
+        # Gear button on the LEFT of the status bar
+        btn_gear = QPushButton("  ⚙ Configurações  ")
+        btn_gear.setFixedHeight(24)
+        btn_gear.setStyleSheet(
+            "QPushButton { background: #E2E8F0; border: 1px solid #CBD5E1; border-radius: 4px; "
+            "font-size: 13px; color: #475569; padding: 2px 10px; }"
+            "QPushButton:hover { background: #2BA8A0; color: white; border-color: #2BA8A0; }"
+        )
+        btn_gear.setToolTip("Abrir Configurações")
+        btn_gear.clicked.connect(self.open_settings)
+        self.status_bar.addWidget(btn_gear)
+
+        # Status label on the RIGHT
         self.lbl_status = QLabel("Inicializando...")
         self.status_bar.addPermanentWidget(self.lbl_status)
 
-        # Populate models async
-        QTimer.singleShot(500, self.refresh_models)
+    # ── Prompt Loading ──
+
+    def load_prompts_from_disk(self):
+        """Load .md prompt files from prompts/ into combo box."""
+        prompts_dir = os.path.join(self.project_root, 'prompts')
+        try:
+            files = sorted([f for f in os.listdir(prompts_dir) if f.endswith('.md')])
+            if files:
+                for f in files:
+                    name = os.path.splitext(f)[0]
+                    self.combo_prompt_type.addItem(name)
+                self.log(f"{len(files)} prompts carregados de disco.", "success")
+        except Exception as e:
+            self.log(f"Erro ao listar prompts: {e}", "error")
 
     # ── Version & Connectivity ──
 
@@ -384,6 +406,17 @@ class MainWindow(QMainWindow):
         if f:
             self.file_path_input.setText(f)
             self.log(f"Arquivo selecionado: {f}", "info")
+            # Populate company combo
+            self.combo_company.clear()
+            self.combo_company.addItem("Todas (Processar tudo)")
+            try:
+                df, items = self.worker_engine.load_data(f)
+                if items:
+                    for item in items:
+                        self.combo_company.addItem(item)
+                    self.log(f"{len(items)} empresas encontradas.", "success")
+            except Exception as e:
+                self.log(f"Erro ao listar empresas: {e}", "error")
 
     def open_settings(self):
         dlg = SettingsDialog(self)
@@ -398,15 +431,26 @@ class MainWindow(QMainWindow):
 
         model = self.combo_model.currentText()
         prompt_type = self.combo_prompt_type.currentText()
-        if "Automático" in prompt_type:
-            prompt_type = None
+        if "Selecione" in prompt_type:
+            QMessageBox.warning(self, "Aviso", "Selecione um tipo de análise (prompt) antes de processar.")
+            return
+
+        # Company selection -> rows_to_process
+        rows_to_process = None
+        company_sel = self.combo_company.currentText()
+        if "Todas" not in company_sel:
+            try:
+                row_idx = int(company_sel.split(":")[0].strip())
+                rows_to_process = [row_idx]
+            except ValueError:
+                pass
 
         self.btn_process.setEnabled(False)
         self.progress_bar.setRange(0, 0)
         self.update_status_footer("processing")
 
         self.processing_thread = QThread()
-        self.worker = ProcessingWorker(file_path, model, None, prompt_type_override=prompt_type)
+        self.worker = ProcessingWorker(file_path, model, rows_to_process, prompt_type_override=prompt_type)
         self.worker.moveToThread(self.processing_thread)
 
         self.processing_thread.started.connect(self.worker.run)
@@ -455,9 +499,7 @@ class MainWindow(QMainWindow):
         self.log(msg, level)
 
     def log(self, message, level="info"):
-        # Log area uses green-on-dark theme from QSS
-        # Use different shades for log levels
-        color = "#8CC63F"  # Default green
+        color = "#8CC63F"
         if level == "error":
             color = "#EF4444"
         elif level == "success":

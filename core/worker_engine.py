@@ -182,32 +182,22 @@ class WorkerEngine:
 
     def call_ai_api(self, prompt_content, config):
         # Strategy:
-        # 1. Primary: gemini-1.5-pro (Temp 0.1) -> Depth & Reasoning
-        # 2. Fallback: gemini-2.0-flash (Temp 0.2) -> Speed & Recovery
+        # 1. Primary: User-selected model
+        # 2. Fallback chain of current available models
+        # NOTE: gemini-1.5-pro and gemini-1.5-flash are DEPRECATED (404).
         
-        user_model = config.get('model', 'gemini-1.5-pro')
-        
-        # Construct fallback chain
-        # If user selected Pro, keep Pro first. If user selected Flash, respect that?
-        # User Instruction: "O padrão deveria ser o modelo pro".
-        
-        # We will try the user selected model first (which defaults to Pro), then fallbacks.
+        user_model = config.get('model', 'gemini-3-pro-preview')
         
         candidate_models = [
             user_model,
             'models/' + user_model if not user_model.startswith('models/') else user_model,
             
-            # Explicit Primary
-            'models/gemini-1.5-pro',
-            'gemini-1.5-pro',
-            
-            # Explicit Fallback
-            'models/gemini-2.0-flash',
+            # Current models: Pro first, Flash fallback
+            'gemini-3-pro-preview',
+            'gemini-2.5-pro',
+            'gemini-2.5-flash',
             'gemini-2.0-flash',
-            
-            # Legacy/Safety
-            'models/gemini-1.5-flash',
-            'gemini-flash-latest'
+            'gemini-flash-latest',
         ]
         
         # Deduplicate preserving order
@@ -250,36 +240,51 @@ class WorkerEngine:
 
     def parse_response(self, ai_response):
         parsed_data = {}
-        sections = ["RESUMO_EXECUTIVO", "DIAGNOSTICO", "LACUNAS", "CLASSIFICACAO", "OBSERVACOES_XALQ"]
+        # All 14 sections matching template_xalq.docx
+        sections = [
+            "RESUMO_EXECUTIVO", "DIAGNOSTICO", "LACUNAS", "CLASSIFICACAO",
+            "ESTRUTURA_TO_BE", "MATRIZ_DE_METRICAS", "ARQUITETURA_CONCEITUAL_DE_DADOS",
+            "PERGUNTAS_DECISORIAS", "KPIS_ASSOCIADOS", "VISUALIZACAO_CONCEITUAL",
+            "RISCOS_ATUAIS", "RISCOS_SE_NAO_IMPLEMENTAR",
+            "OBSERVACOES_XALQ", "PROXIMOS_PASSOS"
+        ]
         
-        # 1. Strict
+        # 1. Strict: [SECTION]...[/SECTION]
         for section in sections:
             pattern = fr"\[{section}\](.*?)\[/{section}\]"
             match = re.search(pattern, ai_response, re.DOTALL | re.IGNORECASE)
             parsed_data[section] = match.group(1).strip() if match else ""
             
-        # 2. Flexible Fallback
-        if sum(1 for v in parsed_data.values() if v) < 2:
+        # 2. Flexible Fallback: header-based parsing
+        if sum(1 for v in parsed_data.values() if v) < 3:
             self.log_and_progress("Parsing estrito falhou. Usando modo flexível...", "debug")
             clean_response = ai_response.replace("*", "").replace("#", "")
             current_section = None
             
-            # Header mapping
             map_headers = {
                 "RESUMO EXECUTIVO": "RESUMO_EXECUTIVO",
                 "DIAGNOSTICO": "DIAGNOSTICO",
-                "LACUNAS": "LACUNAS", 
+                "LACUNAS": "LACUNAS",
                 "CLASSIFICACAO": "CLASSIFICACAO",
-                "OBSERVACOES": "OBSERVACOES_XALQ"
+                "ESTRUTURA TO BE": "ESTRUTURA_TO_BE",
+                "ESTRUTURA TO-BE": "ESTRUTURA_TO_BE",
+                "MATRIZ DE METRICAS": "MATRIZ_DE_METRICAS",
+                "ARQUITETURA CONCEITUAL": "ARQUITETURA_CONCEITUAL_DE_DADOS",
+                "PERGUNTAS DECISORIAS": "PERGUNTAS_DECISORIAS",
+                "KPIS ASSOCIADOS": "KPIS_ASSOCIADOS",
+                "VISUALIZACAO CONCEITUAL": "VISUALIZACAO_CONCEITUAL",
+                "RISCOS ATUAIS": "RISCOS_ATUAIS",
+                "RISCOS SE NAO": "RISCOS_SE_NAO_IMPLEMENTAR",
+                "OBSERVACOES": "OBSERVACOES_XALQ",
+                "PROXIMOS PASSOS": "PROXIMOS_PASSOS",
             }
             
             lines = clean_response.split('\n')
             for line in lines:
-                upper_line = line.strip().upper().replace(":", "")
-                # Check for header
+                upper_line = line.strip().upper().replace(":", "").replace("\u00c1", "A").replace("\u00c9", "E").replace("\u00d3", "O").replace("\u00ca", "E")
                 found = False
                 for k, v in map_headers.items():
-                    if k in upper_line and len(upper_line) < 40: # Short header line
+                    if k in upper_line and len(upper_line) < 50:
                         current_section = v
                         found = True
                         break
@@ -310,7 +315,16 @@ class WorkerEngine:
                 '{{DIAGNOSTICO}}': parsed_data.get('DIAGNOSTICO', ''),
                 '{{LACUNAS}}': parsed_data.get('LACUNAS', ''),
                 '{{CLASSIFICACAO}}': parsed_data.get('CLASSIFICACAO', ''),
+                '{{ESTRUTURA_TO_BE}}': parsed_data.get('ESTRUTURA_TO_BE', ''),
+                '{{MATRIZ_DE_METRICAS}}': parsed_data.get('MATRIZ_DE_METRICAS', ''),
+                '{{ARQUITETURA_CONCEITUAL_DE_DADOS}}': parsed_data.get('ARQUITETURA_CONCEITUAL_DE_DADOS', ''),
+                '{{PERGUNTAS_DECISORIAS}}': parsed_data.get('PERGUNTAS_DECISORIAS', ''),
+                '{{KPIS_ASSOCIADOS}}': parsed_data.get('KPIS_ASSOCIADOS', ''),
+                '{{VISUALIZACAO_CONCEITUAL}}': parsed_data.get('VISUALIZACAO_CONCEITUAL', ''),
+                '{{RISCOS_ATUAIS}}': parsed_data.get('RISCOS_ATUAIS', ''),
+                '{{RISCOS_SE_NAO_IMPLEMENTAR}}': parsed_data.get('RISCOS_SE_NAO_IMPLEMENTAR', ''),
                 '{{OBSERVACOES_XALQ}}': parsed_data.get('OBSERVACOES_XALQ', ''),
+                '{{PROXIMOS_PASSOS}}': parsed_data.get('PROXIMOS_PASSOS', ''),
                 '{{tipo_agente}}': agent_type,
                 '{{modelo_gemini}}': model_name,
                 '{{timestamp}}': timestamp

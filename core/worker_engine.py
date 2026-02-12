@@ -163,8 +163,17 @@ class WorkerEngine:
              return None
 
         # Models to try in order of preference if the selected one fails
-        selected_model = config.get('model', 'gemini-1.5-pro')
-        fallback_models = [selected_model, 'gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-pro']
+        selected_model = config.get('model', 'gemini-1.5-flash')
+        fallback_models = [
+            selected_model, 
+            'gemini-1.5-flash', 
+            'gemini-1.5-pro',
+            'gemini-1.0-pro', 
+            'gemini-pro',
+            'models/gemini-1.5-flash',
+            'models/gemini-1.5-pro',
+            'models/gemini-1.0-pro'
+        ]
         # Remove duplicates while preserving order
         models_to_try = list(dict.fromkeys(fallback_models))
         
@@ -390,9 +399,23 @@ class WorkerEngine:
             return None
 
     def get_available_models(self):
-        """Return available Gemini models."""
-        # Hardcoded list for now, or could fetch from genai.list_models() if key is valid
-        return ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro", "gemini-pro"]
+        """Return available Gemini models, dynamically checking API if possible."""
+        default_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"]
+        try:
+            if self.api_key:
+                # Try to fetch real list
+                real_models = []
+                for m in genai.list_models():
+                    if 'generateContent' in m.supported_generation_methods:
+                        # strip 'models/' prefix for display if desired, or keep it
+                        name = m.name.replace('models/', '') 
+                        real_models.append(name)
+                if real_models:
+                    return list(set(real_models + default_models)) # Merge
+        except:
+            pass
+            
+        return default_models
         
     def get_prompts_list(self):
         """Return list of available prompt files."""
@@ -416,7 +439,7 @@ class WorkerEngine:
         
         # Config setup
         config = {
-            'model': model_override or 'gemini-1.5-pro',
+            'model': model_override or 'gemini-1.5-flash',
             'temperature': 0.2,
             'top_p': 0.9
         }

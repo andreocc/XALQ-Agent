@@ -1,15 +1,15 @@
 {
-  "version": "1.1.8",
+  "version": "1.1.9",
   "release_date": "2026-02-12",
   "min_executable_version": "1.0.0",
   "changelog": [
-    "Sistema de Fallback de Modelos: Tenta gemini-1.5-flash/gemini-pro se o principal falhar.",
-    "Correção na autenticação: uso de chave padrão se nenhuma for configurada.",
-    "HOTFIX: Correção crítica de erro 'AttributeError: read_prompt_content'."
+    "Expansão do Fallback de Modelos: Suporte a prefixos 'models/' e detecção dinâmica.",
+    "Mudança de modelo padrão para 'gemini-1.5-flash' (mais rápido/estável).",
+    "Correção na autenticação e tratamento de erro 404 de modelos."
   ],
   "assets": {
     "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
-    "prompt_manifest_v": "20260212.09"
+    "prompt_manifest_v": "20260212.10"
   },
   "critical_update": true
 }

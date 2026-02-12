@@ -72,42 +72,62 @@ class WorkerEngine:
             self.progress_callback(message)
 
     def load_agent_prompt(self, agent_type):
-        # 1. Try direct filename match (with or without extension)
-        possible_filenames = [agent_type, f"{agent_type}.md"]
-        
-        # Check GitHub first if configured (Logic: could be optional, but for now we fallback to it)
-        # Actually proper logic: Check local, if not found try GitHub, or periodic sync.
-        # Requirement: "Obter prompt do GitHub". Let's try local first, if not found, try GitHub.
-        
-        # Mapping fallback for legacy types
+        """
+        Loads prompt content with fuzzy filename matching to handle
+        encoding differences (accents, dashes, case).
+        """
+        import unicodedata
+
+        def normalize(text):
+            # NFKD decomposition, lowercase, remove non-ascii for robust comparison
+            text = unicodedata.normalize('NFKD', text).encode('ascii', 'ignore').decode('utf-8')
+            return text.lower().replace(" ", "").replace("-", "").replace("_", "")
+
+        target_normalized = normalize(agent_type)
+
+        # 1. List local files and try to find a match
+        try:
+            local_files = [f for f in os.listdir(self.prompts_dir) if f.endswith('.md')]
+            for fname in local_files:
+                # Check 1: Exact match
+                if fname == agent_type or fname == f"{agent_type}.md":
+                    return self.read_prompt_content(fname)
+                
+                # Check 2: Fuzzy match
+                fname_normalized = normalize(fname.replace(".md", ""))
+                if fname_normalized == target_normalized:
+                    return self.read_prompt_content(fname)
+                    
+                # Check 3: Checking if target is a substring of filename (e.g. "revenue" in "...REVENUE...")
+                if target_normalized in fname_normalized:
+                     # Heuristic: if strict match fails, maybe the short name is part of the long filename
+                     # But be careful not to match "revenue" to "revenue_operations" incorrectly if both exist
+                     # For now, let's trust the mapping below if this fails.
+                     pass
+
+        except Exception as e:
+            self.log_and_progress(f"Error listing local prompts: {e}", "error")
+
+        # 2. Fallback to mapped types (legacy/convenience) if no local file matched
         agent_type_mapping = {
             'b2b (vende para outras empresas)': 'revenue',
             'revenue': '1.DIAGNÓSTICO – REVENUE DECISION (CORE).md',
             'operations': '1.DIAGNÓSTICO – DIGITAL OPERATIONS (CORE).md',
         }
+        
         mapped_name = agent_type_mapping.get(agent_type, agent_type)
         if not mapped_name.endswith('.md'):
              mapped_name += '.md'
-        
-        # Normalize list of filenames to check
-        files_to_check = [f for f in possible_filenames if f.endswith('.md')]
-        if not files_to_check: files_to_check.append(mapped_name)
-        
-        # Try finding locally
-        for fname in files_to_check:
-            full_path = os.path.join(self.prompts_dir, fname)
-            if os.path.exists(full_path):
-                try:
-                    with open(full_path, 'r', encoding='utf-8') as f:
-                        return f.read()
-                except Exception as e:
-                    self.log_and_progress(f"Error loading local prompt {fname}: {e}", "error")
 
-        # If not found locally, try GitHub
+        # Try loading the mapped name locally (again, with fuzzy check if needed, but usually exact)
+        full_path = os.path.join(self.prompts_dir, mapped_name)
+        if os.path.exists(full_path):
+             return self.read_prompt_content(mapped_name)
+
+        # 3. If not found locally, try GitHub
         self.log_and_progress(f"Prompt {mapped_name} não encontrado localmente. Buscando no GitHub...", "debug")
         content = self.updater.get_github_prompt(mapped_name)
         if content:
-            # Save locally for caching/next time
             self.save_prompt_content(mapped_name, content)
             return content
             

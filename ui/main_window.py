@@ -288,6 +288,10 @@ class MainWindow(QMainWindow):
         engine = WorkerEngine()
         prompts = engine.get_prompts_list()
         self.prompt_type_combo.clear()
+        
+        # Add "Automatic" option first
+        self.prompt_type_combo.addItem("Automático (Detectar pelo conteúdo)")
+        
         if prompts:
             self.prompt_type_combo.addItems(prompts)
             self.status_label.setText(f"Prompts carregados: {len(prompts)}")
@@ -295,6 +299,8 @@ class MainWindow(QMainWindow):
             self.prompt_type_combo.addItem("revenue") # Fallback
             self.prompt_type_combo.addItem("operations") # Fallback
             self.status_label.setText("Nenhum prompt encontrado. Usando padrões.")
+            
+        self.prompt_type_combo.setCurrentIndex(0) # Select Automatic by default
     
     def _restore_last_model(self):
         """Restore the last used model selection."""
@@ -342,6 +348,8 @@ class MainWindow(QMainWindow):
         
         # Determine prompt type
         prompt_type = self.prompt_type_combo.currentText()
+        if prompt_type.startswith("Automático"):
+            prompt_type = None # Let the engine detect it
         
         # Determine rows to process
         rows_to_process = None

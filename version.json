@@ -1,16 +1,16 @@
 {
-  "version": "1.1.3",
+  "version": "1.1.4",
   "release_date": "2026-02-12",
   "min_executable_version": "1.0.0",
   "changelog": [
-    "Melhoria no parser de resposta da IA (suporte a formatação flexível).",
-    "Tratamento de bloqueios de segurança (Safety Filters) do Gemini.",
-    "Correção na detecção do nome da empresa.",
-    "Correção na autenticação do Gemini."
+    "Melhoria na normalização de nomes de arquivos de prompt (caracteres especiais).",
+    "Adição da opção 'Automático' na seleção de tipo de análise.",
+    "Melhoria no parser de resposta da IA.",
+    "Tratamento de bloqueios de segurança do Gemini."
   ],
   "assets": {
     "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
-    "prompt_manifest_v": "20260212.04"
+    "prompt_manifest_v": "20260212.05"
   },
   "critical_update": false
 }

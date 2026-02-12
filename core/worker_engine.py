@@ -11,6 +11,13 @@ from PySide6.QtCore import QSettings
 from functools import lru_cache
 from core.updater import Updater
 
+# Load .env file if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
+except ImportError:
+    pass  # dotenv not installed, rely on system env vars
+
 class WorkerEngine:
     def __init__(self, base_dir=None, progress_callback=None, api_key=None):
         self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
@@ -36,20 +43,17 @@ class WorkerEngine:
         
         # GitHub Config
         self.repo_url = "https://raw.githubusercontent.com/andreocc/XALQ-Agent/main/prompts/"
-        self.github_pat = self.settings.value("github_pat", "")
+        self.github_pat = os.environ.get("GITHUB_PAT") or self.settings.value("github_pat", "")
 
-        # Use passed key or load from settings
-        # Fallback to shared default if not configured (matches SettingsDialog default)
-        DEFAULT_KEY = "AIzaSyA1R5VwkRUrdiSd4KQMEsCdEKQZ-blzWxk"
-        
+        # API Key: .env -> QSettings -> empty
         self.api_key = api_key
         if not self.api_key:
-             self.api_key = self.settings.value("gemini_api_key", "")
-        
+            self.api_key = os.environ.get("GEMINI_API_KEY", "")
         if not self.api_key:
-             self.api_key = DEFAULT_KEY
-             self.log_and_progress("Usando chave de API pública/padrão.", "debug")
-             
+            self.api_key = self.settings.value("gemini_api_key", "")
+        if not self.api_key:
+            self.log_and_progress("Nenhuma chave de API configurada. Configure em .env ou Configurações.", "error")
+
         self._configure_gemini()
 
     def _ensure_dirs(self):

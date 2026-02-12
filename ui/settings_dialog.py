@@ -1,3 +1,4 @@
+import os
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                                QComboBox, QPlainTextEdit, QPushButton, QMessageBox, QLineEdit)
 from PySide6.QtCore import Qt, QSettings
@@ -42,18 +43,11 @@ class SettingsDialog(QDialog):
         
         layout.addLayout(keys_layout)
         
-        # Load existing keys
+        # Load existing keys (from QSettings, fallback to env vars)
         settings = QSettings("XALQ", "XALQ Agent")
         
-        # Defaults provided by user request
-        default_gemini = "AIzaSyA1R5VwkRUrdiSd4KQMEsCdEKQZ-blzWxk"
-        default_github = "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"
-        
-        current_gemini = settings.value("gemini_api_key", "")
-        if not current_gemini: current_gemini = default_gemini
-            
-        current_github = settings.value("github_pat", "")
-        if not current_github: current_github = default_github
+        current_gemini = settings.value("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
+        current_github = settings.value("github_pat", "") or os.environ.get("GITHUB_PAT", "")
             
         self.gemini_key_input.setText(current_gemini)
         self.github_pat_input.setText(current_github)

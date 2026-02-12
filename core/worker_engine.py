@@ -134,6 +134,15 @@ class WorkerEngine:
         self.log_and_progress(f"Prompt not found for type: {agent_type} (Local or GitHub)", "error")
         return None
 
+    def read_prompt_content(self, filename):
+        try:
+            full_path = os.path.join(self.prompts_dir, filename)
+            with open(full_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            self.log_and_progress(f"Error reading prompt file {filename}: {e}", "error")
+            return None
+
     def call_ai_api(self, prompt_content, config):
         """Routes to Gemini API."""
         return self.call_gemini_api(prompt_content, config)

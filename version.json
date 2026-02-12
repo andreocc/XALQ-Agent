@@ -1,16 +1,15 @@
 {
-  "version": "1.1.6",
+  "version": "1.1.7",
   "release_date": "2026-02-12",
   "min_executable_version": "1.0.0",
   "changelog": [
+    "Correção na autenticação: uso de chave padrão se nenhuma for configurada.",
     "HOTFIX: Correção crítica de erro 'AttributeError: read_prompt_content'.",
-    "Renomeação dos arquivos de prompt para compatibilidade (removidos acentos e caracteres especiais).",
-    "Melhoria na normalização de nomes de arquivos de prompt.",
-    "Adição da opção 'Automático' na seleção de tipo de análise."
+    "Renomeação dos arquivos de prompt para compatibilidade."
   ],
   "assets": {
     "exe_url": "https://github.com/andreocc/XALQ-Agent/releases/latest/download/XALQ_Agent.exe",
-    "prompt_manifest_v": "20260212.07"
+    "prompt_manifest_v": "20260212.08"
   },
   "critical_update": true
 }

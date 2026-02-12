@@ -35,7 +35,17 @@ class WorkerEngine:
         self.updater = Updater(self.base_dir)
         
         # Use passed key or load from settings
-        self.api_key = api_key or self.settings.value("gemini_api_key", "")
+        # Fallback to shared default if not configured (matches SettingsDialog default)
+        DEFAULT_KEY = "AIzaSyA1R5VwkRUrdiSd4KQMEsCdEKQZ-blzWxk"
+        
+        self.api_key = api_key
+        if not self.api_key:
+             self.api_key = self.settings.value("gemini_api_key", "")
+        
+        if not self.api_key:
+             self.api_key = DEFAULT_KEY
+             self.log_and_progress("Usando chave de API pública/padrão.", "debug")
+             
         self._configure_gemini()
 
     def _ensure_dirs(self):

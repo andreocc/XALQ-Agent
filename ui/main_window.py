@@ -1,14 +1,15 @@
 import os
 import sys
-import webbrowser
+import json
+import requests
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QLabel, QFileDialog, QComboBox, 
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QFileDialog, QComboBox,
     QTextEdit, QProgressBar, QMessageBox, QFrame,
-    QLineEdit, QDialog
+    QLineEdit, QGroupBox, QStatusBar
 )
-from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
-from PySide6.QtGui import QIcon, QFont, QAction, QColor, QPalette
+from PySide6.QtCore import Qt, QThread, Signal, QTimer
+from PySide6.QtGui import QPixmap
 
 from core.worker_engine import WorkerEngine
 from core.processing_worker import ProcessingWorker
@@ -16,122 +17,126 @@ from core.updater import Updater
 from ui.settings_dialog import SettingsDialog
 from ui.resource_monitor import ResourceMonitor
 
-# --- Premium Stylesheet (Dark Blue/Grey) ---
-DARK_THEME_QSS = """
+# --- QSS: Brand Theme (Teal + Green) ---
+BRAND_QSS = """
+/* Janela Principal */
 QMainWindow {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
+    background-color: #F8FAFC;
 }
-QWidget {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    font-family: 'Segoe UI', 'Roboto', sans-serif;
-    font-size: 14px;
+
+/* Cabeçalho Superior */
+#headerFrame {
+    background-color: #2BA8A0;
+    border-bottom: 3px solid #8CC63F;
+    min-height: 80px;
 }
-QFrame#MainContainer {
-    background-color: #1e1e2e;
+
+#appNameLabel {
+    color: #FFFFFF;
+    font-size: 22px;
+    font-weight: bold;
+}
+
+/* Campos de Input e Containers */
+QGroupBox, QFrame#containerFrame {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+}
+
+QLabel {
+    color: #1E293B;
+}
+
+QLineEdit, QComboBox {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 6px;
+    padding: 8px;
+    color: #1E293B;
+}
+
+QLineEdit:focus {
+    border: 2px solid #2BA8A0;
+}
+
+QComboBox::drop-down {
     border: none;
 }
-QFrame#Card {
-    background-color: #262636;
-    border-radius: 12px;
-    border: 1px solid #313244;
-}
-QLabel {
-    color: #cdd6f4;
-}
-QLabel#Title {
-    font-size: 24px;
+
+/* Botão de Ação Principal (Iniciar) */
+QPushButton#btnStart {
+    background-color: #8CC63F;
+    color: #FFFFFF;
     font-weight: bold;
-    color: #89b4fa;
+    font-size: 16px;
+    border-radius: 8px;
+    padding: 12px;
+    border: none;
 }
-QLabel#Subtitle {
-    font-size: 14px;
-    color: #a6adc8;
+
+QPushButton#btnStart:hover {
+    background-color: #7AB535;
 }
-QLabel#StatusFooter {
-    font-size: 12px;
-    color: #6c7086;
-    padding: 5px;
-}
+
+/* Botões Genéricos */
 QPushButton {
-    background-color: #313244;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
+    background-color: #E2E8F0;
+    color: #1E293B;
+    border: 1px solid #CBD5E1;
     border-radius: 6px;
     padding: 8px 16px;
     font-weight: bold;
 }
+
 QPushButton:hover {
-    background-color: #45475a;
-    border-color: #585b70;
+    background-color: #CBD5E1;
 }
-QPushButton:pressed {
-    background-color: #1e1e2e;
-}
-QPushButton#PrimaryButton {
-    background-color: #89b4fa;
-    color: #1e1e2e;
-    border: none;
-}
-QPushButton#PrimaryButton:hover {
-    background-color: #b4befe;
-}
-QComboBox {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 5px;
-    color: #cdd6f4;
-}
-QComboBox:hover {
-    border-color: #585b70;
-}
-QComboBox::drop-down {
-    border: none;
-}
-QLineEdit {
-    background-color: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 5px;
-    color: #cdd6f4;
-}
-QTextEdit {
-    background-color: #11111b;
-    border: 1px solid #313244;
+
+/* Terminal de Logs */
+QTextEdit#logArea {
+    background-color: #1E293B;
+    color: #8CC63F;
+    font-family: 'Consolas', 'Monaco', monospace;
     border-radius: 8px;
-    color: #a6adc8;
-    font-family: 'Consolas', 'Monospace';
-    font-size: 13px;
     padding: 10px;
 }
+
+/* Progress Bar */
 QProgressBar {
-    background-color: #313244;
-    border-radius: 6px;
+    background-color: #E2E8F0;
+    border-radius: 4px;
     text-align: center;
-    color: #cdd6f4;
 }
+
 QProgressBar::chunk {
-    background-color: #89b4fa;
-    border-radius: 6px;
+    background-color: #2BA8A0;
+    border-radius: 4px;
 }
+
+/* Status Bar */
+QStatusBar {
+    background-color: #F1F5F9;
+    color: #64748B;
+    border-top: 1px solid #E2E8F0;
+}
+
 /* Scrollbar */
 QScrollBar:vertical {
     border: none;
-    background: #1e1e2e;
-    width: 10px;
-    margin: 0px 0px 0px 0px;
+    background: #F1F5F9;
+    width: 8px;
 }
 QScrollBar::handle:vertical {
-    background: #45475a;
+    background: #CBD5E1;
     min-height: 20px;
-    border-radius: 5px;
+    border-radius: 4px;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     background: none;
 }
 """
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -141,172 +146,165 @@ class MainWindow(QMainWindow):
         self.processing_thread = None
         self.local_version = "Unknown"
         self.github_connected = False
-        
-        # Apply Theme
-        self.setStyleSheet(DARK_THEME_QSS)
 
-        # Core Components
-        # base_dir is project root (parent of ui/)
+        self.setStyleSheet(BRAND_QSS)
+
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.updater = Updater(project_root)
-        
+
         self.setup_ui()
-        
-        # Initialize Worker AFTER UI to capture logs safely
+
+        # Initialize Worker AFTER UI
         self.worker_engine = WorkerEngine(progress_callback=self.update_log_from_worker)
 
         self.check_local_version()
-        
-        # Async checks
         QTimer.singleShot(1000, self.check_remote_version)
         QTimer.singleShot(1500, self.check_github_connectivity)
 
     def setup_ui(self):
-        # Main Layout
-        main_widget = QWidget()
-        self.setCentralWidget(main_widget)
-        main_h_layout = QHBoxLayout(main_widget)
-        main_h_layout.setContentsMargins(0, 0, 0, 0)
-        main_h_layout.setSpacing(0)
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Content Area
-        content_frame = QFrame()
-        content_frame.setObjectName("MainContainer")
-        content_layout = QVBoxLayout(content_frame)
-        content_layout.setContentsMargins(20, 20, 20, 20)
-        content_layout.setSpacing(15)
-        
-        main_h_layout.addWidget(content_frame)
+        # ── Header ──
+        header = QFrame()
+        header.setObjectName("headerFrame")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(20, 10, 20, 10)
 
-        # --- Header ---
-        header_layout = QHBoxLayout()
-        
         # Logo
-        logo_label = QLabel()
-        logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'templates', 'img', '0_XALQ-0.png')
+        logo_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'templates', 'img', '0_XALQ-0.png'
+        )
         if os.path.exists(logo_path):
-            from PySide6.QtGui import QPixmap
-            pixmap = QPixmap(logo_path)
-            # Resize nicely
-            pixmap = pixmap.scaled(64, 64, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            logo_label.setPixmap(pixmap)
+            logo_label = QLabel()
+            pix = QPixmap(logo_path).scaled(56, 56, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_label.setPixmap(pix)
+            logo_label.setStyleSheet("background: transparent;")
             header_layout.addWidget(logo_label)
-        
-        title_container = QVBoxLayout()
-        title = QLabel("XALQ Agent")
-        title.setObjectName("Title")
-        subtitle = QLabel("Enterprise Intelligence System")
-        subtitle.setObjectName("Subtitle")
-        title_container.addWidget(title)
-        title_container.addWidget(subtitle)
-        
-        header_layout.addLayout(title_container)
-        header_layout.addStretch()
-        
-        # Settings Button
-        self.btn_settings = QPushButton("⚙ Configurações")
-        self.btn_settings.clicked.connect(self.open_settings)
-        header_layout.addWidget(self.btn_settings)
 
-        # Resource Monitor (Mini)
+        app_name = QLabel("XALQ Agent")
+        app_name.setObjectName("appNameLabel")
+        app_name.setStyleSheet("background: transparent;")
+        header_layout.addWidget(app_name)
+        header_layout.addStretch()
+
+        # Settings
+        btn_settings = QPushButton("⚙ Configurações")
+        btn_settings.setStyleSheet("background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3);")
+        btn_settings.clicked.connect(self.open_settings)
+        header_layout.addWidget(btn_settings)
+
+        # Resource Monitor
         self.resource_monitor = ResourceMonitor()
+        self.resource_monitor.setStyleSheet("background: transparent;")
+        for child in self.resource_monitor.findChildren(QLabel):
+            child.setStyleSheet("color: rgba(255,255,255,0.7); font-size: 11px; font-weight: bold; background: transparent;")
         header_layout.addWidget(self.resource_monitor)
-        
-        content_layout.addLayout(header_layout)
-        
-        # Banner for Updates (Hidden by default)
-        self.update_banner = QLabel("🚀 Nova versão disponível! Reinicie para aplicar.")
-        self.update_banner.setStyleSheet("background-color: #a6e3a1; color: #1e1e2e; padding: 10px; border-radius: 6px; font-weight: bold;")
+
+        main_layout.addWidget(header)
+
+        # ── Update Banner (hidden) ──
+        self.update_banner = QLabel("🚀 Nova versão disponível!")
+        self.update_banner.setStyleSheet(
+            "background-color: #8CC63F; color: #FFFFFF; padding: 10px; font-weight: bold;"
+        )
         self.update_banner.setAlignment(Qt.AlignCenter)
         self.update_banner.hide()
-        content_layout.addWidget(self.update_banner)
+        main_layout.addWidget(self.update_banner)
 
-        # --- Card: Input & Configuration ---
-        config_card = QFrame()
-        config_card.setObjectName("Card")
-        card_layout = QVBoxLayout(config_card)
+        # ── Content ──
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+        content_layout.setSpacing(15)
+
+        # Card: Config
+        config_frame = QFrame()
+        config_frame.setObjectName("containerFrame")
+        card_layout = QVBoxLayout(config_frame)
         card_layout.setContentsMargins(20, 20, 20, 20)
+        card_layout.setSpacing(10)
 
-        # File Selection
-        file_layout = QHBoxLayout()
+        # File
+        file_row = QHBoxLayout()
         self.file_path_input = QLineEdit()
         self.file_path_input.setPlaceholderText("Selecione o arquivo de dados (.xlsx, .csv)...")
         self.file_path_input.setReadOnly(True)
-        
-        btn_select_file = QPushButton("📂 Selecionar Arquivo")
-        btn_select_file.clicked.connect(self.select_file)
-        
-        file_layout.addWidget(self.file_path_input)
-        file_layout.addWidget(btn_select_file)
-        card_layout.addLayout(file_layout)
-        
-        # Options Grid
-        opts_layout = QHBoxLayout()
-        
-        # Model Selection
-        mdl_layout = QVBoxLayout()
-        mdl_layout.addWidget(QLabel("Modelo Gemini:"))
+        btn_file = QPushButton("📂 Selecionar Arquivo")
+        btn_file.clicked.connect(self.select_file)
+        file_row.addWidget(self.file_path_input)
+        file_row.addWidget(btn_file)
+        card_layout.addLayout(file_row)
+
+        # Options
+        opts_row = QHBoxLayout()
+
+        mdl_col = QVBoxLayout()
+        mdl_col.addWidget(QLabel("Modelo Gemini:"))
         self.combo_model = QComboBox()
-        # Default options, will try to fetch more
-        self.available_models = ["gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"]
-        self.combo_model.addItems(self.available_models)
+        self.combo_model.addItems(["gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"])
         self.combo_model.setCurrentText("gemini-1.5-pro")
-        mdl_layout.addWidget(self.combo_model)
-        opts_layout.addLayout(mdl_layout)
-        
-        # Analysis Type
-        type_layout = QVBoxLayout()
-        type_layout.addWidget(QLabel("Tipo de Análise:"))
+        mdl_col.addWidget(self.combo_model)
+        opts_row.addLayout(mdl_col)
+
+        type_col = QVBoxLayout()
+        type_col.addWidget(QLabel("Tipo de Análise:"))
         self.combo_prompt_type = QComboBox()
         self.combo_prompt_type.addItems(["Automático (Detectar)", "revenue", "operations"])
-        type_layout.addWidget(self.combo_prompt_type)
-        opts_layout.addLayout(type_layout)
-        
-        card_layout.addLayout(opts_layout)
-        content_layout.addWidget(config_card)
+        type_col.addWidget(self.combo_prompt_type)
+        opts_row.addLayout(type_col)
 
-        # --- Action ---
-        action_layout = QHBoxLayout()
-        self.btn_process = QPushButton("▶ Iniciar Processamento")
-        self.btn_process.setObjectName("PrimaryButton")
-        self.btn_process.setFixedHeight(45)
+        card_layout.addLayout(opts_row)
+        content_layout.addWidget(config_frame)
+
+        # Start Button
+        self.btn_process = QPushButton("▶  Iniciar Processamento")
+        self.btn_process.setObjectName("btnStart")
+        self.btn_process.setFixedHeight(50)
         self.btn_process.clicked.connect(self.start_processing)
-        action_layout.addWidget(self.btn_process)
-        content_layout.addLayout(action_layout)
+        content_layout.addWidget(self.btn_process)
 
-        # --- Logs ---
+        # Logs
         content_layout.addWidget(QLabel("Logs de Execução:"))
         self.log_area = QTextEdit()
+        self.log_area.setObjectName("logArea")
         self.log_area.setReadOnly(True)
         content_layout.addWidget(self.log_area)
 
-        # Progress Bar
+        # Progress
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(6) # Slim
+        self.progress_bar.setFixedHeight(6)
         content_layout.addWidget(self.progress_bar)
 
-        # --- Footer ---
+        main_layout.addWidget(content, 1)
+
+        # ── Status Bar ──
+        self.status_bar = QStatusBar()
+        self.setStatusBar(self.status_bar)
         self.lbl_status = QLabel("Inicializando...")
-        self.lbl_status.setObjectName("StatusFooter")
-        self.lbl_status.setAlignment(Qt.AlignRight)
-        content_layout.addWidget(self.lbl_status)
-        
+        self.status_bar.addPermanentWidget(self.lbl_status)
+
         # Populate models async
         QTimer.singleShot(500, self.refresh_models)
+
+    # ── Version & Connectivity ──
 
     def check_local_version(self):
         try:
             with open(os.path.join(self.updater.base_dir, 'version.json'), 'r', encoding='utf-8') as f:
-                import json
                 v_data = json.load(f)
                 self.local_version = v_data.get('version', 'Unknown')
                 self.update_status_footer("ready")
         except:
-             self.local_version = "Unknown"
-             self.update_status_footer("error")
+            self.local_version = "Unknown"
+            self.update_status_footer("error")
 
     def check_remote_version(self):
         try:
@@ -319,8 +317,6 @@ class MainWindow(QMainWindow):
             print(f"Update check failed: {e}")
 
     def check_github_connectivity(self):
-        """Check if GitHub repo is reachable for prompt sync."""
-        import requests
         try:
             url = "https://raw.githubusercontent.com/andreocc/XALQ-Agent/main/version.json"
             headers = {}
@@ -342,45 +338,44 @@ class MainWindow(QMainWindow):
             self.log(f"GitHub offline: {e}", "error")
 
     def update_status_footer(self, state):
-        """Update footer with colored status indicator."""
         v = self.local_version
         if state == "connected":
             self.lbl_status.setText(f"🟢 Conectado: XALQ v{v}")
-            self.lbl_status.setStyleSheet("color: #a6e3a1; font-size: 12px; padding: 5px;")
+            self.lbl_status.setStyleSheet("color: #16a34a;")
         elif state == "offline":
-            self.lbl_status.setText(f"🔴 Offline / Erro de Auth")
-            self.lbl_status.setStyleSheet("color: #f38ba8; font-size: 12px; padding: 5px;")
+            self.lbl_status.setText("🔴 Offline / Erro de Auth")
+            self.lbl_status.setStyleSheet("color: #dc2626;")
         elif state == "processing":
             model = self.combo_model.currentText()
             self.lbl_status.setText(f"🧠 Processando via: {model}")
-            self.lbl_status.setStyleSheet("color: #89b4fa; font-size: 12px; padding: 5px;")
+            self.lbl_status.setStyleSheet("color: #2BA8A0;")
         elif state == "ready":
             self.lbl_status.setText(f"XALQ v{v} | Status: Pronto")
-            self.lbl_status.setStyleSheet("color: #6c7086; font-size: 12px; padding: 5px;")
+            self.lbl_status.setStyleSheet("color: #64748B;")
         elif state == "done":
-            self.lbl_status.setText(f"🟢 XALQ v{v} | Status: Concluído")
-            self.lbl_status.setStyleSheet("color: #a6e3a1; font-size: 12px; padding: 5px;")
+            self.lbl_status.setText(f"🟢 XALQ v{v} | Concluído")
+            self.lbl_status.setStyleSheet("color: #16a34a;")
         elif state == "error":
-            self.lbl_status.setText(f"🔴 XALQ v{v} | Status: Erro")
-            self.lbl_status.setStyleSheet("color: #f38ba8; font-size: 12px; padding: 5px;")
+            self.lbl_status.setText(f"🔴 XALQ v{v} | Erro")
+            self.lbl_status.setStyleSheet("color: #dc2626;")
+
+    # ── Actions ──
 
     def refresh_models(self):
         try:
-            # Try to fetch real models from worker
-            real = self.worker_engine.get_available_models()
-            if real:
-                current = self.combo_model.currentText()
-                self.combo_model.clear()
-                self.combo_model.addItems(real)
-                # Restore selection or default to Pro
-                idx = self.combo_model.findText(current)
-                if idx >= 0:
-                     self.combo_model.setCurrentIndex(idx)
-                else:
-                     # Default to 1.5-pro if available
-                     idx_pro = self.combo_model.findText("gemini-1.5-pro")
-                     if idx_pro >= 0: 
-                         self.combo_model.setCurrentIndex(idx_pro)
+            if hasattr(self, 'worker_engine'):
+                real = self.worker_engine.get_available_models()
+                if real:
+                    current = self.combo_model.currentText()
+                    self.combo_model.clear()
+                    self.combo_model.addItems(real)
+                    idx = self.combo_model.findText(current)
+                    if idx >= 0:
+                        self.combo_model.setCurrentIndex(idx)
+                    else:
+                        idx_pro = self.combo_model.findText("gemini-1.5-pro")
+                        if idx_pro >= 0:
+                            self.combo_model.setCurrentIndex(idx_pro)
         except:
             pass
 
@@ -393,7 +388,6 @@ class MainWindow(QMainWindow):
     def open_settings(self):
         dlg = SettingsDialog(self)
         dlg.exec()
-        # Reload worker engine key
         self.worker_engine = WorkerEngine(progress_callback=self.update_log_from_worker)
 
     def start_processing(self):
@@ -403,15 +397,15 @@ class MainWindow(QMainWindow):
             return
 
         model = self.combo_model.currentText()
-        prompt_type = self.combo_model_prompt_type_text()
+        prompt_type = self.combo_prompt_type.currentText()
+        if "Automático" in prompt_type:
+            prompt_type = None
 
         self.btn_process.setEnabled(False)
-        self.progress_bar.setRange(0, 0) # Indeterminate pulsating
+        self.progress_bar.setRange(0, 0)
         self.update_status_footer("processing")
 
-        # Worker Thread
         self.processing_thread = QThread()
-        # ProcessingWorker(file_path, model_override, rows_to_process, prompt_type_override, api_key)
         self.worker = ProcessingWorker(file_path, model, None, prompt_type_override=prompt_type)
         self.worker.moveToThread(self.processing_thread)
 
@@ -422,23 +416,17 @@ class MainWindow(QMainWindow):
 
         self.processing_thread.start()
 
-    def combo_model_prompt_type_text(self):
-        txt = self.combo_prompt_type.currentText()
-        if "Automático" in txt: return None
-        return txt
-
     def on_processing_finished(self):
         self.btn_process.setEnabled(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
         self.update_status_footer("done")
         self.log("Processamento finalizado com sucesso.", "success")
-        
-        # Open output folder
+
         try:
-             os.startfile(self.worker_engine.output_dir)
+            os.startfile(self.worker_engine.output_dir)
         except:
-             pass
+            pass
 
         if self.processing_thread:
             self.processing_thread.quit()
@@ -454,40 +442,46 @@ class MainWindow(QMainWindow):
             self.processing_thread.quit()
             self.processing_thread.wait()
 
+    # ── Logging ──
+
     def update_log_from_worker(self, msg):
-        # Detect type for coloring
         level = "info"
-        if "erro" in msg.lower() or "falha" in msg.lower(): level = "error"
-        elif "sucesso" in msg.lower() or "gerado" in msg.lower(): level = "success"
-        elif "---" in msg: level = "highlight"
-        
+        if "erro" in msg.lower() or "falha" in msg.lower():
+            level = "error"
+        elif "sucesso" in msg.lower() or "gerado" in msg.lower():
+            level = "success"
+        elif "---" in msg:
+            level = "highlight"
         self.log(msg, level)
 
     def log(self, message, level="info"):
-        color = "#cdd6f4" # Default Text
-        if level == "error": color = "#f38ba8" # Red
-        elif level == "success": color = "#a6e3a1" # Green
-        elif level == "highlight": color = "#89b4fa" # Blue
-        elif level == "debug": color = "#6c7086" # Grey
+        # Log area uses green-on-dark theme from QSS
+        # Use different shades for log levels
+        color = "#8CC63F"  # Default green
+        if level == "error":
+            color = "#EF4444"
+        elif level == "success":
+            color = "#34D399"
+        elif level == "highlight":
+            color = "#60A5FA"
+        elif level == "debug":
+            color = "#94A3B8"
 
         html = f'<span style="color:{color};">{message}</span>'
         self.log_area.append(html)
-        # Auto scroll
         sb = self.log_area.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    # ── Cleanup ──
+
     def closeEvent(self, event):
-        """Properly stop threads before closing."""
-        # Stop ResourceMonitor thread
         if hasattr(self, 'resource_monitor'):
             self.resource_monitor.close()
-        
-        # Stop processing thread
         if self.processing_thread and self.processing_thread.isRunning():
             self.processing_thread.quit()
             self.processing_thread.wait(2000)
-        
         super().closeEvent(event)
+
 
 if __name__ == "__main__":
     from PySide6.QtWidgets import QApplication

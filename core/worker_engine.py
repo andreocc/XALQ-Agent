@@ -221,7 +221,7 @@ class WorkerEngine:
                 generation_config = genai.types.GenerationConfig(
                     temperature=config.get('temperature', temp),
                     top_p=0.9,
-                    max_output_tokens=16384,
+                    max_output_tokens=4096,
                 )
                 
                 self.log_and_progress(f"⏳ Gerando análise com {model_name}... (pode levar 2-5 min)", "info")
@@ -348,39 +348,68 @@ class WorkerEngine:
                         carimbo = str(val)
                         break
 
-            replacements = {
-                '{{NOME DA EMPRESA}}': nome_empresa,
-                '{{CARIMBO DE DATA/HORA}}': carimbo,
-                '{{RESUMO_EXECUTIVO}}': parsed_data.get('RESUMO_EXECUTIVO', ''),
-                '{{DIAGNOSTICO}}': parsed_data.get('DIAGNOSTICO', ''),
-                '{{LACUNAS}}': parsed_data.get('LACUNAS', ''),
-                '{{CLASSIFICACAO}}': parsed_data.get('CLASSIFICACAO', ''),
-                '{{ESTRUTURA_TO_BE}}': parsed_data.get('ESTRUTURA_TO_BE', ''),
-                '{{MATRIZ_DE_METRICAS}}': parsed_data.get('MATRIZ_DE_METRICAS', ''),
-                '{{ARQUITETURA_CONCEITUAL_DE_DADOS}}': parsed_data.get('ARQUITETURA_CONCEITUAL_DE_DADOS', ''),
-                '{{PERGUNTAS_DECISORIAS}}': parsed_data.get('PERGUNTAS_DECISORIAS', ''),
-                '{{KPIS_ASSOCIADOS}}': parsed_data.get('KPIS_ASSOCIADOS', ''),
-                '{{VISUALIZACAO_CONCEITUAL}}': parsed_data.get('VISUALIZACAO_CONCEITUAL', ''),
-                '{{RISCOS_ATUAIS}}': parsed_data.get('RISCOS_ATUAIS', ''),
-                '{{RISCOS_SE_NAO_IMPLEMENTAR}}': parsed_data.get('RISCOS_SE_NAO_IMPLEMENTAR', ''),
-                '{{OBSERVACOES_XALQ}}': parsed_data.get('OBSERVACOES_XALQ', ''),
-                '{{PROXIMOS_PASSOS}}': parsed_data.get('PROXIMOS_PASSOS', ''),
-                '{{tipo_agente}}': agent_type,
-                '{{modelo_gemini}}': model_name,
-                '{{timestamp}}': timestamp
+            # 2. Clear existing body content (paragraphs and tables) to treat template as base
+            # We iterate backwards to avoid index issues when deleting
+            for i in range(len(doc.paragraphs) - 1, -1, -1):
+                p = doc.paragraphs[i]
+                p._element.getparent().remove(p._element)
+                
+            for i in range(len(doc.tables) - 1, -1, -1):
+                t = doc.tables[i]
+                t._element.getparent().remove(t._element)
+
+            # 3. Dynamic Body Generation
+            # Define human-readable titles for sections
+            section_titles = {
+                "RESUMO_EXECUTIVO": "Resumo Executivo",
+                "DIAGNOSTICO": "Diagnóstico Situacional",
+                "LACUNAS": "Lacunas & Gaps",
+                "CLASSIFICACAO": "Classificação de Maturidade",
+                "ESTRUTURA_TO_BE": "Estrutura Recomendada (To-Be)",
+                "MATRIZ_DE_METRICAS": "Matriz de Métricas",
+                "ARQUITETURA_CONCEITUAL_DE_DADOS": "Arquitetura Conceitual de Dados",
+                "PERGUNTAS_DECISORIAS": "Perguntas Decisórias",
+                "KPIS_ASSOCIADOS": "KPIs Associados",
+                "VISUALIZACAO_CONCEITUAL": "Visualização Conceitual",
+                "RISCOS_ATUAIS": "Riscos Atuais",
+                "RISCOS_SE_NAO_IMPLEMENTAR": "Riscos de Não Implementação",
+                "OBSERVACOES_XALQ": "Observações XALQ",
+                "PROXIMOS_PASSOS": "Próximos Passos"
             }
-            
-            # Helper to replace in paragraphs
-            def replace_in_p(p):
-                for key, val in replacements.items():
-                    if key in p.text:
-                        p.text = p.text.replace(key, str(val))
-            
-            for p in doc.paragraphs: replace_in_p(p)
-            for t in doc.tables:
-                for r in t.rows:
-                    for c in r.cells:
-                        for p in c.paragraphs: replace_in_p(p)
+
+            # Order must match parse_response sections or be defined here
+            ordered_sections = [
+                "RESUMO_EXECUTIVO", "DIAGNOSTICO", "LACUNAS", "CLASSIFICACAO",
+                "ESTRUTURA_TO_BE", "MATRIZ_DE_METRICAS", "ARQUITETURA_CONCEITUAL_DE_DADOS",
+                "PERGUNTAS_DECISORIAS", "KPIS_ASSOCIADOS", "VISUALIZACAO_CONCEITUAL",
+                "RISCOS_ATUAIS", "RISCOS_SE_NAO_IMPLEMENTAR",
+                "OBSERVACOES_XALQ", "PROXIMOS_PASSOS"
+            ]
+
+            for sec_key in ordered_sections:
+                content = parsed_data.get(sec_key, '').strip()
+                if content:
+                    # Add Heading
+                    title = section_titles.get(sec_key, sec_key.replace('_', ' ').title())
+                    doc.add_heading(title, level=1)
+                    
+                    # Add Content
+                    # We can do basic processing here like handling list items if they start with - or *
+                    for line in content.split('\n'):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        
+                        if line.startswith('- ') or line.startswith('* '):
+                            doc.add_paragraph(line[2:], style='List Bullet')
+                        elif line[0].isdigit() and line[1:3] in ['. ', ') ']:
+                             # Simple heuristic for numbered lists
+                             doc.add_paragraph(line, style='List Number')
+                        else:
+                            doc.add_paragraph(line)
+                    
+                    # Add spacing between sections
+                    doc.add_paragraph() 
 
             out_name = f"{self.sanitize_filename(prefix)}_{self.sanitize_filename(model_name)}_report_{timestamp}.docx"
             out_path = os.path.join(self.output_dir, out_name)

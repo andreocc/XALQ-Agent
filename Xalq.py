@@ -29,7 +29,7 @@ def create_splash(logo_path):
 
     # Draw logo centered
     if os.path.exists(logo_path):
-        logo = QPixmap(logo_path).scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        logo = QPixmap(logo_path).scaled(180, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         x = (splash_w - logo.width()) // 2
         painter.drawPixmap(x, 40, logo)
 
@@ -72,7 +72,7 @@ def main():
     window = MainWindow()
 
     # Close splash and show main window after 2 seconds
-    QTimer.singleShot(2000, lambda: (splash.close(), window.show()))
+    QTimer.singleShot(3000, lambda: (splash.close(), window.show()))
 
     sys.exit(app.exec())
 

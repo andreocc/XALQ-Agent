@@ -272,6 +272,13 @@ class MainWindow(QMainWindow):
         content_layout.addWidget(self.log_area)
 
         # Progress
+        self.elapsed_label = QLabel("")
+        self.elapsed_label.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: bold;")
+        self.elapsed_label.setAlignment(Qt.AlignCenter)
+        self.elapsed_label.setFixedHeight(20)
+        self.elapsed_label.hide()
+        content_layout.addWidget(self.elapsed_label)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -457,18 +464,48 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self.on_processing_finished)
         self.worker.progress.connect(self.update_log_from_worker)
         self.worker.error.connect(self.on_processing_error)
+        self.worker.files_generated.connect(self.on_files_generated)
+
+        self._last_generated_files = []
+
+        # Elapsed timer for user feedback
+        self._elapsed_seconds = 0
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.timeout.connect(self._update_elapsed)
+        self._elapsed_timer.start(1000)
 
         self.processing_thread.start()
 
+    def _update_elapsed(self):
+        self._elapsed_seconds += 1
+        mins, secs = divmod(self._elapsed_seconds, 60)
+        dots = "." * ((self._elapsed_seconds % 3) + 1)
+        self.elapsed_label.setText(f"⏳ Processando{dots} ({mins:02d}:{secs:02d})")
+        self.elapsed_label.show()
+
+    def _stop_elapsed_timer(self):
+        if hasattr(self, '_elapsed_timer') and self._elapsed_timer:
+            self._elapsed_timer.stop()
+        self.elapsed_label.hide()
+
+    def on_files_generated(self, files):
+        self._last_generated_files = files
+
     def on_processing_finished(self):
+        self._stop_elapsed_timer()
         self.btn_process.setEnabled(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
+        elapsed = self._elapsed_seconds
+        mins, secs = divmod(elapsed, 60)
         self.update_status_footer("done")
-        self.log("Processamento finalizado com sucesso.", "success")
+        self.log(f"Processamento finalizado com sucesso em {mins:02d}:{secs:02d}.", "success")
 
         try:
-            os.startfile(self.worker_engine.output_dir)
+            if hasattr(self, '_last_generated_files') and self._last_generated_files:
+                os.startfile(self._last_generated_files[-1])
+            else:
+                os.startfile(self.worker_engine.output_dir)
         except:
             pass
 
@@ -477,6 +514,7 @@ class MainWindow(QMainWindow):
             self.processing_thread.wait()
 
     def on_processing_error(self, err_msg):
+        self._stop_elapsed_timer()
         self.btn_process.setEnabled(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)

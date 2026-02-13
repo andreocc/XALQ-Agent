@@ -43,6 +43,7 @@ class ProcessingWorker(QObject):
                     self.progress.emit(message)
 
             engine = WorkerEngine(progress_callback=bridge_callback, api_key=self.api_key)
+            engine.set_cancellation_callback(lambda: not self._is_running)
             # Returns list of generated files
             generated_files = engine.process_file(
                 self.file_path, 

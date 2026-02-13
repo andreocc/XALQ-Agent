@@ -137,6 +137,7 @@ class MainWindow(QMainWindow):
         self.processing_thread = None
         self.local_version = "Unknown"
         self.github_connected = False
+        self.setAcceptDrops(True) # Enable Drag & Drop
 
         self.setStyleSheet(BRAND_QSS)
 
@@ -257,12 +258,32 @@ class MainWindow(QMainWindow):
         card_layout.addLayout(opts_row)
         content_layout.addWidget(config_frame)
 
+        # Buttons Layout
+        btn_layout = QHBoxLayout()
+        
         # Start Button
         self.btn_process = QPushButton("▶  Iniciar Processamento")
         self.btn_process.setObjectName("btnStart")
         self.btn_process.setFixedHeight(50)
         self.btn_process.clicked.connect(self.start_processing)
-        content_layout.addWidget(self.btn_process)
+        btn_layout.addWidget(self.btn_process)
+        
+        # Cancel Button
+        self.btn_cancel = QPushButton("⏹ Cancelar")
+        self.btn_cancel.setFixedHeight(50)
+        self.btn_cancel.setStyleSheet("""
+            QPushButton {
+                background-color: #EF4444; color: white; border: none; 
+                border-radius: 8px; font-weight: bold; font-size: 16px;
+            }
+            QPushButton:hover { background-color: #DC2626; }
+            QPushButton:disabled { background-color: #E2E8F0; color: #94A3B8; }
+        """)
+        self.btn_cancel.setEnabled(False)
+        self.btn_cancel.clicked.connect(self.cancel_processing)
+        btn_layout.addWidget(self.btn_cancel)
+        
+        content_layout.addLayout(btn_layout)
 
         # Logs
         content_layout.addWidget(QLabel("Logs de Execução:"))
@@ -413,22 +434,19 @@ class MainWindow(QMainWindow):
         if f:
             self.file_path_input.setText(f)
             self.log(f"Arquivo selecionado: {f}", "info")
-            # Populate company combo
-            self.combo_company.clear()
-            self.combo_company.addItem("Todas (Processar tudo)")
-            try:
-                df, items = self.worker_engine.load_data(f)
-                if items:
-                    for item in items:
-                        self.combo_company.addItem(item)
-                    self.log(f"{len(items)} empresas encontradas.", "success")
-            except Exception as e:
-                self.log(f"Erro ao listar empresas: {e}", "error")
+            self.select_file_logic(f)
 
     def open_settings(self):
         dlg = SettingsDialog(self)
         dlg.exec()
         self.worker_engine = WorkerEngine(progress_callback=self.update_log_from_worker)
+
+    def cancel_processing(self):
+        if hasattr(self, 'worker'):
+            self.worker.stop()
+            self.log("⚠️ Cancelamento solicitado pelo usuário...", "warning")
+            self.btn_cancel.setEnabled(False)
+            self.btn_process.setEnabled(False) # Wait for finish signal to re-enable
 
     def start_processing(self):
         file_path = self.file_path_input.text()
@@ -453,6 +471,7 @@ class MainWindow(QMainWindow):
                 pass
 
         self.btn_process.setEnabled(False)
+        self.btn_cancel.setEnabled(True) # Enable Cancel
         self.progress_bar.setRange(0, 0)
         self.update_status_footer("processing")
 
@@ -494,6 +513,7 @@ class MainWindow(QMainWindow):
     def on_processing_finished(self):
         self._stop_elapsed_timer()
         self.btn_process.setEnabled(True)
+        self.btn_cancel.setEnabled(False)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
         elapsed = self._elapsed_seconds
@@ -516,6 +536,7 @@ class MainWindow(QMainWindow):
     def on_processing_error(self, err_msg):
         self._stop_elapsed_timer()
         self.btn_process.setEnabled(True)
+        self.btn_cancel.setEnabled(False)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.update_status_footer("error")
@@ -551,6 +572,38 @@ class MainWindow(QMainWindow):
         self.log_area.append(html)
         sb = self.log_area.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    # ── Drag & Drop ──
+    
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            
+    def dropEvent(self, event):
+        files = [u.toLocalFile() for u in event.mimeData().urls()]
+        if files:
+            # Pick first valid file
+            for f in files:
+                if f.lower().endswith(('.xlsx', '.csv', '.xls')):
+                    self.file_path_input.setText(f)
+                    self.log(f"📥 Arquivo carregado via Drag & Drop: {f}", "info")
+                    
+                    # Trigger logic to load companies
+                    self.select_file_logic(f)
+                    break
+
+    def select_file_logic(self, f):
+        # Shared logic for file selection
+        self.combo_company.clear()
+        self.combo_company.addItem("Todas (Processar tudo)")
+        try:
+            df, items = self.worker_engine.load_data(f)
+            if items:
+                for item in items:
+                    self.combo_company.addItem(item)
+                self.log(f"{len(items)} empresas encontradas.", "success")
+        except Exception as e:
+            self.log(f"Erro ao listar empresas: {e}", "error")
 
     # ── Cleanup ──
 

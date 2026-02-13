@@ -20,6 +20,12 @@ except ImportError:
 
 class WorkerEngine:
     def __init__(self, base_dir=None, progress_callback=None, api_key=None):
+        # Initialize attributes first to prevent AttributeError in log_and_progress or elsewhere
+        self.api_key = None
+        self.github_pat = None
+        self.check_cancellation = None
+        self.progress_callback = progress_callback
+        
         self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
         
         # Adjust base_dir if it's inside 'core'
@@ -33,8 +39,6 @@ class WorkerEngine:
         self.error_dir = os.path.join(self.base_dir, 'error')
         self.log_dir = os.path.join(self.base_dir, 'logs')
         
-        self.progress_callback = progress_callback
-        
         self._ensure_dirs()
         self.logger = self._setup_logging()
         
@@ -45,14 +49,21 @@ class WorkerEngine:
         self.repo_url = "https://raw.githubusercontent.com/andreocc/XALQ-Agent/main/prompts/"
         self.github_pat = os.environ.get("GITHUB_PAT") or self.settings.value("github_pat", "")
 
-        # API Key: .env -> QSettings -> empty
-        self.api_key = api_key
+        # API Key precedence: Argument > Env > Settings
+        if api_key:
+            self.api_key = api_key
         if not self.api_key:
             self.api_key = os.environ.get("GEMINI_API_KEY", "")
         if not self.api_key:
             self.api_key = self.settings.value("gemini_api_key", "")
+        
         if not self.api_key:
             self.log_and_progress("Nenhuma chave de API configurada. Configure em .env ou Configurações.", "error")
+
+        self._configure_gemini()
+
+    def set_cancellation_callback(self, callback):
+        self.check_cancellation = callback
 
         self._configure_gemini()
 
@@ -82,6 +93,18 @@ class WorkerEngine:
             self.log_and_progress("Gemini API Key não configurada!", "error")
 
     def log_and_progress(self, message, status_type="info"):
+        # Sanitize secrets before logging
+        api_key = getattr(self, 'api_key', None)
+        github_pat = getattr(self, 'github_pat', None)
+        
+        if api_key and len(api_key) > 10:
+             # Mask API Key (AIzaSy...)
+             message = message.replace(api_key, api_key[:6] + "..." + api_key[-4:])
+        
+        if github_pat and len(github_pat) > 10:
+             # Mask PAT
+             message = message.replace(github_pat, github_pat[:4] + "..." + github_pat[-4:])
+
         if status_type == "info":
             self.logger.info(message)
         elif status_type == "error":
@@ -184,19 +207,24 @@ class WorkerEngine:
         self.log_and_progress(f"Prompt not found: {mapped_name}", "error")
         return None
 
+    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((requests.exceptions.RequestException, Exception)), # Broad retry for AI errors
+        reraise=True
+    )
     def call_ai_api(self, prompt_content, config):
         # Strategy:
         # 1. Primary: User-selected model
         # 2. Fallback chain of current available models
-        # NOTE: gemini-1.5-pro and gemini-1.5-flash are DEPRECATED (404).
         
         user_model = config.get('model', 'gemini-3-pro-preview')
         
         candidate_models = [
             user_model,
             'models/' + user_model if not user_model.startswith('models/') else user_model,
-            
-            # Current models: Pro first, Flash fallback
             'gemini-3-pro-preview',
             'gemini-2.5-pro',
             'gemini-2.5-flash',
@@ -211,6 +239,11 @@ class WorkerEngine:
         
         for model_name in models_to_try:
             try:
+                # Check cancellation if callback provided
+                if self.check_cancellation and self.check_cancellation():
+                    self.log_and_progress("Processamento cancelado pelo usuário.", "error")
+                    return None
+
                 self.log_and_progress(f"Tentando modelo: {model_name}...", "debug")
                 model = genai.GenerativeModel(model_name)
                 
@@ -225,15 +258,19 @@ class WorkerEngine:
                 )
                 
                 self.log_and_progress(f"⏳ Gerando análise com {model_name}... (pode levar 2-5 min)", "info")
+                # Increase timeout to 10 minutes (600s) to avoid 504 on complex prompts
                 response = model.generate_content(
                     prompt_content,
                     generation_config=generation_config,
+                    request_options={'timeout': 600}
                 )
                 
                 if not response.parts:
                     if response.prompt_feedback:
                          self.log_and_progress(f"Safety Block ({model_name}): {response.prompt_feedback}", "error")
-                    return None
+                    # If safety block, maybe don't retry same model? But loop continues.
+                    # For now, treat as failure of this model
+                    continue 
 
                 self.log_and_progress(f"✅ Resposta recebida de {model_name}.", "info")
                 return response.text
@@ -242,6 +279,18 @@ class WorkerEngine:
                 # Log usage limits or 404s
                 self.log_and_progress(f"Erro em {model_name}: {e}", "debug")
                 last_error = e
+                # If it's a 429 (Resource Exhausted), tenacity might treat it, 
+                # BUT since we are inside a loop of models, maybe we want to fail over to next model?
+                # The @retry decorator wraps the WHOLE function. 
+                # If we raise here, it retries the WHOLE function (starting from first model again).
+                # That might be what we want for transient network errors.
+                # But for 404 (Model not found), we should just continue loop.
+                if "404" in str(e) or "NotFound" in str(e):
+                    continue
+                if "429" in str(e) or "ResourceExhausted" in str(e):
+                    # Rate limit -> Let Tenacity retry the function (maybe wait and try again)
+                    raise e 
+                
                 continue
         
         self.log_and_progress(f"FALHA FATAL: Nenhum modelo disponível. Erro: {last_error}", "error")
@@ -305,11 +354,16 @@ class WorkerEngine:
 
         return parsed_data
 
-    # Helper for filename
     def sanitize_filename(self, text):
         if not isinstance(text, str): return "unknown"
-        s = re.sub(r'[^\w\-\.]', '_', text)
-        return s.strip('_')
+        # 1. Replace unsafe chars with _
+        s = re.sub(r'[^a-zA-Z0-9\.\-\_]', '_', text)
+        # 2. Collapse double dots to single dot to prevent traversal
+        # This handles .. -> . and ... -> .
+        s = re.sub(r'\.+', '.', s)
+        # 3. Collapse multiple underscores
+        s = re.sub(r'_+', '_', s)
+        return s.strip('._')
 
     def generate_word_report(self, parsed_data, agent_type, model_name, timestamp, prefix, row_data=None):
         template_path = os.path.join(self.templates_dir, 'template_xalq.docx')
@@ -498,6 +552,10 @@ class WorkerEngine:
         self.log_and_progress(f"Iniciando processamento de {total} linhas...")
 
         for row_idx, row in df.iterrows():
+            if self.check_cancellation and self.check_cancellation():
+                self.log_and_progress("Processamento interrompido pelo usuário.", "error")
+                break
+
             if rows_to_process and row_idx not in rows_to_process: continue
             
             # Name Prefix

@@ -43,11 +43,25 @@ class SettingsDialog(QDialog):
         
         layout.addLayout(keys_layout)
         
-        # Load existing keys (from QSettings, fallback to env vars)
-        settings = QSettings("XALQ", "XALQ Agent")
+        # Load existing keys (Prioritize Keyring > Env > QSettings legacy)
+        import keyring
         
-        current_gemini = settings.value("gemini_api_key", "") or os.environ.get("GEMINI_API_KEY", "")
-        current_github = settings.value("github_pat", "") or os.environ.get("GITHUB_PAT", "")
+        # 1. Try Keyring
+        current_gemini = keyring.get_password("XALQ", "gemini_api_key")
+        current_github = keyring.get_password("XALQ", "github_pat")
+        
+        # 2. Fallback to Env
+        if not current_gemini:
+            current_gemini = os.environ.get("GEMINI_API_KEY", "")
+        if not current_github:
+            current_github = os.environ.get("GITHUB_PAT", "")
+            
+        # 3. Fallback to Legacy QSettings (Migration)
+        settings = QSettings("XALQ", "XALQ Agent")
+        if not current_gemini and settings.value("gemini_api_key"):
+            current_gemini = settings.value("gemini_api_key")
+        if not current_github and settings.value("github_pat"):
+            current_github = settings.value("github_pat")
             
         self.gemini_key_input.setText(current_gemini)
         self.github_pat_input.setText(current_github)
@@ -103,9 +117,20 @@ class SettingsDialog(QDialog):
         content = self.editor.toPlainText()
         
         # Save Keys
+        import keyring
+        gemini_key = self.gemini_key_input.text().strip()
+        github_pat = self.github_pat_input.text().strip()
+        
+        if gemini_key:
+            keyring.set_password("XALQ", "gemini_api_key", gemini_key)
+        
+        if github_pat:
+            keyring.set_password("XALQ", "github_pat", github_pat)
+            
+        # Clean legacy QSettings to avoid confusion
         settings = QSettings("XALQ", "XALQ Agent")
-        settings.setValue("gemini_api_key", self.gemini_key_input.text().strip())
-        settings.setValue("github_pat", self.github_pat_input.text().strip())
+        settings.remove("gemini_api_key")
+        settings.remove("github_pat")
         settings.sync()
         
         success = self.engine.save_prompt_content(filename, content)

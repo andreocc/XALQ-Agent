@@ -5,3 +5,5 @@ requests
 google-generativeai
 python-docx
 python-dotenv
+keyring
+tenacity

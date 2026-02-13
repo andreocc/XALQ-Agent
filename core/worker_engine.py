@@ -221,7 +221,7 @@ class WorkerEngine:
                 generation_config = genai.types.GenerationConfig(
                     temperature=config.get('temperature', temp),
                     top_p=0.9,
-                    max_output_tokens=4096,
+                    max_output_tokens=6144,
                 )
                 
                 self.log_and_progress(f"⏳ Gerando análise com {model_name}... (pode levar 2-5 min)", "info")
